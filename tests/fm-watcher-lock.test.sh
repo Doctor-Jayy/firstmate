@@ -381,6 +381,32 @@ test_lock_steal_missing_canonical_sweeps_deep_orphan() {
   pass "canonical-absent dead steal cleanup removes a deeper orphan in one round"
 }
 
+test_lock_steal_missing_canonical_sweeps_symlink_orphan() {
+  local dir state lockdir deep dead owner rc pid
+  dir=$(make_case lock-steal-symlink-orphan)
+  state="$dir/state"
+  lockdir="$state/.contend.lock"
+  deep="$lockdir.steal.steal"
+  dead=$(dead_pid)
+  mkdir "$lockdir"
+  printf '%s\n' "$dead" > "$lockdir/pid"
+  owner=$(FM_STATE_OVERRIDE="$state" bash -c '. "$1"; fm_lock_owner_dir "$2"' _ "$LIB" "$deep")
+  printf '%s\n' "$dead" > "$owner/pid"
+  ln -s "$owner" "$deep"
+  rc=0
+  pid=$(FM_STATE_OVERRIDE="$state" FM_LOCK_STALE_AFTER=0 bash -c '
+    . "$1"
+    fm_lock_try_acquire "$2" || exit 7
+    cat "$2/pid"
+    fm_lock_release "$2"
+  ' _ "$LIB" "$lockdir") || rc=$?
+  [ "$rc" -eq 0 ] || fail "symlink orphan acquisition failed (rc=$rc)"
+  [ -n "$pid" ] && [ "$pid" != "$dead" ] || fail "symlink orphan acquisition did not replace the dead primary holder"
+  [ ! -e "$deep" ] && [ ! -L "$deep" ] || fail "stale symlink orphan survived cleanup"
+  [ ! -e "$owner" ] || fail "stale symlink orphan owner directory survived cleanup"
+  pass "canonical-absent symlink orphan cleanup removes its owner directory"
+}
+
 test_lock_live_steal_mutex_is_not_reclaimed() {
   local dir state lockdir dead holder_file holder out i lockpid stealpid
   dir=$(make_case lock-live-stealer)
@@ -862,6 +888,7 @@ test_lock_steal_never_chains_past_base_name
 test_lock_steal_second_round_still_converges
 test_lock_suffixed_input_reuses_canonical_marker
 test_lock_steal_missing_canonical_sweeps_deep_orphan
+test_lock_steal_missing_canonical_sweeps_symlink_orphan
 test_lock_live_steal_mutex_is_not_reclaimed
 test_lock_does_not_steal_live_lock
 test_lock_empty_pid_uses_minimum_grace
