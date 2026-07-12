@@ -248,6 +248,19 @@ fm_lock_recheck_stale_owner() {
   return 0
 }
 
+fm_lock_base_path() {
+  local lockdir=$1 prefix base stripped
+  base=${lockdir##*/}
+  prefix=${lockdir%"$base"}
+  while :; do
+    stripped=${base%.steal}
+    [ "$stripped" != "$base" ] || break
+    [ -n "$stripped" ] || break
+    base=$stripped
+  done
+  printf '%s%s\n' "$prefix" "$base"
+}
+
 # A leftover *.steal chain beyond the single canonical marker is dead residue:
 # a process that died mid-recursion under the old chaining behavior (fixed
 # below) left nested dead-pid-owned markers behind, one per suffix. Nothing
@@ -259,14 +272,15 @@ fm_lock_recheck_stale_owner() {
 # instead of sitting on disk forever.
 fm_lock_sweep_orphaned_steal_chain() {
   local base=$1 path pid
-  path="$base.steal"
+  path="$base.steal.steal"
   while [ -e "$path" ] || [ -L "$path" ]; do
     pid=$(cat "$path/pid" 2>/dev/null || true)
-    fm_pid_alive "$pid" && break
-    fm_lock_mid_acquire_is_fresh "$path" "$pid" && break
-    fm_lock_remove_path "$path" || break
+    fm_pid_alive "$pid" && return 1
+    fm_lock_mid_acquire_is_fresh "$path" "$pid" && return 1
+    fm_lock_remove_path "$path" || return 1
     path="$path.steal"
   done
+  return 0
 }
 
 # Acquire the steal marker for a lock in a single, non-recursive round. A naive
@@ -279,9 +293,10 @@ fm_lock_sweep_orphaned_steal_chain() {
 # the BASE lock name, never off whatever name a previous steal round produced;
 # reclaim a dead-held steal marker directly instead of recursing into it.
 fm_lock_acquire_steal_marker() {
-  local steal=$1 pid
+  local lockdir=$1 steal pid
   FM_LOCK_OWNER_DIR=
-  fm_lock_sweep_orphaned_steal_chain "$steal"
+  steal="$lockdir.steal"
+  fm_lock_sweep_orphaned_steal_chain "$lockdir" || return 1
   if fm_lock_try_create "$steal"; then
     return 0
   fi
@@ -293,14 +308,24 @@ fm_lock_acquire_steal_marker() {
     return 1
   fi
   fm_lock_remove_path "$steal" || true
-  fm_lock_sweep_orphaned_steal_chain "$steal"
+  fm_lock_sweep_orphaned_steal_chain "$lockdir" || return 1
   fm_lock_try_create "$steal"
 }
 
 fm_lock_try_acquire() {
-  local lockdir=$1 pid steal cur rc steal_owner primary_owner
+  local lockdir=$1 pid steal cur rc steal_owner primary_owner base_lock
   FM_LOCK_HELD_PID=
   FM_LOCK_OWNER_DIR=
+
+  base_lock=$(fm_lock_base_path "$lockdir") || return 1
+  if [ "$base_lock" != "$lockdir" ]; then
+    if fm_lock_acquire_steal_marker "$base_lock"; then
+      return 0
+    fi
+    FM_LOCK_HELD_PID=$(cat "$base_lock.steal/pid" 2>/dev/null || true)
+    FM_LOCK_OWNER_DIR=
+    return 1
+  fi
 
   if fm_lock_try_create "$lockdir"; then
     return 0
@@ -317,7 +342,7 @@ fm_lock_try_acquire() {
   fi
 
   steal="$lockdir.steal"
-  if ! fm_lock_acquire_steal_marker "$steal"; then
+  if ! fm_lock_acquire_steal_marker "$lockdir"; then
     FM_LOCK_HELD_PID=$(cat "$lockdir/pid" 2>/dev/null || true)
     FM_LOCK_OWNER_DIR=
     return 1

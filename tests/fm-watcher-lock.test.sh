@@ -326,6 +326,36 @@ test_lock_steal_second_round_still_converges() {
   pass "repeated dead-holder steal rounds stay idempotent on the base lock name"
 }
 
+test_lock_suffixed_input_reuses_canonical_marker() {
+  local dir state lockdir dead trace rc pid chained
+  dir=$(make_case lock-steal-suffixed-input)
+  state="$dir/state"
+  lockdir="$state/.contend.lock"
+  trace="$dir/create-trace.log"
+  dead=$(dead_pid)
+  mkdir "$lockdir"
+  printf '%s\n' "$dead" > "$lockdir/pid"
+  : > "$trace"
+  rc=0
+  pid=$(TRACE_FILE="$trace" FM_STATE_OVERRIDE="$state" FM_LOCK_STALE_AFTER=0 bash -c '
+    . "$1"
+    eval "$(declare -f fm_lock_try_create | sed "1s/.*/fm_lock_try_create_orig()/")"
+    fm_lock_try_create() {
+      printf "%s\n" "$1" >> "$TRACE_FILE"
+      fm_lock_try_create_orig "$@"
+    }
+    fm_lock_try_acquire "$2.steal" || exit 7
+    cat "$2.steal/pid"
+    fm_lock_release "$2.steal"
+  ' _ "$LIB" "$lockdir") || rc=$?
+  [ "$rc" -eq 0 ] || fail "suffixed lock input did not acquire its canonical marker (rc=$rc)"
+  [ -n "$pid" ] && [ "$pid" != "$dead" ] || fail "suffixed lock input did not replace the dead holder"
+  chained=$(grep -c '\.steal\.steal' "$trace")
+  [ "$chained" -eq 0 ] || fail "suffixed lock input created a nested steal marker"
+  [ ! -e "$lockdir.steal.steal" ] || fail "suffixed lock input left a nested steal marker"
+  pass "suffixed lock input reuses the canonical steal marker"
+}
+
 test_lock_steal_missing_canonical_sweeps_deep_orphan() {
   local dir state lockdir deep dead rc pid
   dir=$(make_case lock-steal-missing-canonical)
@@ -830,6 +860,7 @@ test_lock_steals_dead_pid_lock
 test_lock_stale_steal_single_winner_under_concurrency
 test_lock_steal_never_chains_past_base_name
 test_lock_steal_second_round_still_converges
+test_lock_suffixed_input_reuses_canonical_marker
 test_lock_steal_missing_canonical_sweeps_deep_orphan
 test_lock_live_steal_mutex_is_not_reclaimed
 test_lock_does_not_steal_live_lock
