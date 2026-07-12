@@ -248,6 +248,54 @@ fm_lock_recheck_stale_owner() {
   return 0
 }
 
+# A leftover *.steal chain beyond the single canonical marker is dead residue:
+# a process that died mid-recursion under the old chaining behavior (fixed
+# below) left nested dead-pid-owned markers behind, one per suffix. Nothing
+# under the current single-level naming scheme ever looks past the first
+# ".steal", so once a level's holder is confirmed dead (never a live one,
+# matching every other steal safety check in this file), it is safe residue to
+# discard outright; walk it via a plain loop (no recursive naming, so this
+# cannot itself grow unbounded) so old evidence gets swept up opportunistically
+# instead of sitting on disk forever.
+fm_lock_sweep_orphaned_steal_chain() {
+  local base=$1 path pid
+  path="$base.steal"
+  while [ -e "$path" ] || [ -L "$path" ]; do
+    pid=$(cat "$path/pid" 2>/dev/null || true)
+    fm_pid_alive "$pid" && break
+    fm_lock_mid_acquire_is_fresh "$path" "$pid" && break
+    fm_lock_remove_path "$path" || break
+    path="$path.steal"
+  done
+}
+
+# Acquire the steal marker for a lock in a single, non-recursive round. A naive
+# implementation would call fm_lock_try_acquire on the steal path itself, but
+# that derives ITS steal marker from whatever path it was just called with -
+# here, the already-".steal" path - so a dead-holder steal marker would chain
+# another ".steal" suffix onto an already-".steal" name every round, forever:
+# lockdir.steal, then lockdir.steal.steal, then lockdir.steal.steal.steal, and
+# so on. Every artifact this repository derives from a lock name must key off
+# the BASE lock name, never off whatever name a previous steal round produced;
+# reclaim a dead-held steal marker directly instead of recursing into it.
+fm_lock_acquire_steal_marker() {
+  local steal=$1 pid
+  FM_LOCK_OWNER_DIR=
+  if fm_lock_try_create "$steal"; then
+    return 0
+  fi
+  pid=$(cat "$steal/pid" 2>/dev/null || true)
+  if fm_pid_alive "$pid"; then
+    return 1
+  fi
+  if fm_lock_mid_acquire_is_fresh "$steal" "$pid"; then
+    return 1
+  fi
+  fm_lock_remove_path "$steal" || true
+  fm_lock_sweep_orphaned_steal_chain "$steal"
+  fm_lock_try_create "$steal"
+}
+
 fm_lock_try_acquire() {
   local lockdir=$1 pid steal cur rc steal_owner primary_owner
   FM_LOCK_HELD_PID=
@@ -268,7 +316,7 @@ fm_lock_try_acquire() {
   fi
 
   steal="$lockdir.steal"
-  if ! fm_lock_try_acquire "$steal"; then
+  if ! fm_lock_acquire_steal_marker "$steal"; then
     FM_LOCK_HELD_PID=$(cat "$lockdir/pid" 2>/dev/null || true)
     FM_LOCK_OWNER_DIR=
     return 1

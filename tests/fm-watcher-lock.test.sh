@@ -234,6 +234,98 @@ test_lock_stale_steal_single_winner_under_concurrency() {
   pass "concurrent stale-lock steal yields exactly one winner"
 }
 
+# Regression for a real incident (2026-07-11): a watcher killed while holding
+# the wake-queue lock left the next acquisition recursing into
+# fm_lock_try_acquire on the ".steal" marker, which derived ITS OWN steal
+# name by appending ".steal" onto whatever lockdir it was CURRENTLY called
+# with - already a ".steal" name on any nested round - so repeated
+# dead-holder rounds chained an unbounded ".steal.steal.steal..." suffix
+# instead of reusing one canonical name, eventually overflowing a filesystem
+# path component ("basename: ...steal.steal.steal[...]: File name too long",
+# followed by a cascade of empty-arg basename errors before it recovered).
+# fm_lock_acquire_steal_marker (bin/fm-wake-lib.sh) fixes this by always
+# deriving the steal marker from the BASE lock name and reclaiming a
+# dead-held marker directly instead of recursing into it. Confirmed by
+# tracing every path fm_lock_try_create is asked to create against a
+# pre-existing 5-level-deep dead chain (exactly what repeated
+# crash-mid-reclaim events leave behind): unpatched, this produces several
+# doubly-suffixed ".steal.steal" create attempts; patched, it never does.
+test_lock_steal_never_chains_past_base_name() {
+  local dir state lockdir dead path i trace rc chained leftover
+  dir=$(make_case lock-steal-no-chain)
+  state="$dir/state"
+  lockdir="$state/.contend.lock"
+  trace="$dir/create-trace.log"
+  dead=$(dead_pid)
+  mkdir "$lockdir"
+  printf '%s\n' "$dead" > "$lockdir/pid"
+  path="$lockdir"
+  i=1
+  while [ "$i" -le 5 ]; do
+    path="$path.steal"
+    mkdir "$path"
+    printf '%s\n' "$dead" > "$path/pid"
+    i=$((i + 1))
+  done
+  : > "$trace"
+  rc=0
+  TRACE_FILE="$trace" FM_STATE_OVERRIDE="$state" FM_LOCK_STALE_AFTER=0 bash -c '
+    . "$1"
+    eval "$(declare -f fm_lock_try_create | sed "1s/.*/fm_lock_try_create_orig()/")"
+    fm_lock_try_create() {
+      printf "%s\n" "$1" >> "$TRACE_FILE"
+      fm_lock_try_create_orig "$@"
+    }
+    fm_lock_try_acquire "$2"
+  ' _ "$LIB" "$lockdir" || rc=$?
+  [ "$rc" -eq 0 ] || fail "acquisition against a deep dead-holder chain did not converge (rc=$rc)"
+  chained=$(grep -c '\.steal\.steal' "$trace")
+  [ "$chained" -eq 0 ] || fail "steal marker name chained past the base lock name ($chained doubly-suffixed create attempts)"
+  leftover=$(find "$state" -maxdepth 1 -name '*.steal*' | wc -l | tr -d ' ')
+  [ "$leftover" -eq 0 ] || fail "stale steal-chain artifacts were not cleaned up ($leftover left behind)"
+  pass "steal marker name never chains past the base lock name; a deep dead chain converges and is swept in one round"
+}
+
+# The literal reported shape: a dead-holder steal, then a second dead-holder
+# steal against the SAME lock. Idempotent naming means every round reuses the
+# exact same "<lockdir>.steal" marker; it must never grow between rounds.
+test_lock_steal_second_round_still_converges() {
+  local dir state lockdir dead1 dead2 pid1 pid2 rc
+  dir=$(make_case lock-steal-second-round)
+  state="$dir/state"
+  lockdir="$state/.contend.lock"
+  dead1=$(dead_pid)
+  mkdir "$lockdir"
+  printf '%s\n' "$dead1" > "$lockdir/pid"
+  rc=0
+  pid1=$(FM_STATE_OVERRIDE="$state" FM_LOCK_STALE_AFTER=0 bash -c '
+    . "$1"
+    fm_lock_try_acquire "$2" && cat "$2/pid"
+  ' _ "$LIB" "$lockdir") || rc=$?
+  [ "$rc" -eq 0 ] || fail "first dead-holder steal round failed (rc=$rc)"
+  [ -n "$pid1" ] && [ "$pid1" != "$dead1" ] || fail "first round did not replace the dead primary holder"
+  [ ! -e "$lockdir.steal" ] || fail "steal marker survived the first round"
+
+  # A second round, this time against a lock whose holder also died AND left
+  # behind a stale steal marker of its own (the residue a process that
+  # crashed mid-reclaim - after creating the marker, before finishing - would
+  # leave). This must still resolve in one round using the same base name.
+  dead2=$(dead_pid)
+  printf '%s\n' "$dead2" > "$lockdir/pid"
+  mkdir "$lockdir.steal"
+  printf '%s\n' "$dead2" > "$lockdir.steal/pid"
+  rc=0
+  pid2=$(FM_STATE_OVERRIDE="$state" FM_LOCK_STALE_AFTER=0 bash -c '
+    . "$1"
+    fm_lock_try_acquire "$2" && cat "$2/pid"
+  ' _ "$LIB" "$lockdir") || rc=$?
+  [ "$rc" -eq 0 ] || fail "second dead-holder steal round failed (rc=$rc)"
+  [ -n "$pid2" ] && [ "$pid2" != "$dead2" ] || fail "second round did not replace the dead primary holder"
+  [ ! -e "$lockdir.steal" ] || fail "steal marker survived the second round"
+  [ ! -e "$lockdir.steal.steal" ] || fail "second round chained a .steal.steal artifact instead of reusing the base steal name"
+  pass "repeated dead-holder steal rounds stay idempotent on the base lock name"
+}
+
 test_lock_live_steal_mutex_is_not_reclaimed() {
   local dir state lockdir dead holder_file holder out i lockpid stealpid
   dir=$(make_case lock-live-stealer)
@@ -711,6 +803,8 @@ test_guard_warnings
 test_lock_single_winner_under_concurrency
 test_lock_steals_dead_pid_lock
 test_lock_stale_steal_single_winner_under_concurrency
+test_lock_steal_never_chains_past_base_name
+test_lock_steal_second_round_still_converges
 test_lock_live_steal_mutex_is_not_reclaimed
 test_lock_does_not_steal_live_lock
 test_lock_empty_pid_uses_minimum_grace
