@@ -281,6 +281,7 @@ fm_lock_sweep_orphaned_steal_chain() {
 fm_lock_acquire_steal_marker() {
   local steal=$1 pid
   FM_LOCK_OWNER_DIR=
+  fm_lock_sweep_orphaned_steal_chain "$steal"
   if fm_lock_try_create "$steal"; then
     return 0
   fi

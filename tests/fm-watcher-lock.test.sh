@@ -326,6 +326,31 @@ test_lock_steal_second_round_still_converges() {
   pass "repeated dead-holder steal rounds stay idempotent on the base lock name"
 }
 
+test_lock_steal_missing_canonical_sweeps_deep_orphan() {
+  local dir state lockdir deep dead rc pid
+  dir=$(make_case lock-steal-missing-canonical)
+  state="$dir/state"
+  lockdir="$state/.contend.lock"
+  deep="$lockdir.steal.steal"
+  dead=$(dead_pid)
+  mkdir "$lockdir" "$deep"
+  printf '%s\n' "$dead" > "$lockdir/pid"
+  printf '%s\n' "$dead" > "$deep/pid"
+  [ ! -e "$lockdir.steal" ] || fail "canonical steal marker was present in the missing-canonical setup"
+  rc=0
+  pid=$(FM_STATE_OVERRIDE="$state" FM_LOCK_STALE_AFTER=0 bash -c '
+    . "$1"
+    fm_lock_try_acquire "$2" || exit 7
+    cat "$2/pid"
+    fm_lock_release "$2"
+  ' _ "$LIB" "$lockdir") || rc=$?
+  [ "$rc" -eq 0 ] || fail "missing-canonical deep-orphan acquisition failed (rc=$rc)"
+  [ -n "$pid" ] && [ "$pid" != "$dead" ] || fail "missing-canonical acquisition did not replace the dead primary holder"
+  [ ! -e "$lockdir.steal" ] || fail "canonical steal marker survived release"
+  [ ! -e "$deep" ] || fail "deeper orphan survived canonical-absent cleanup"
+  pass "canonical-absent dead steal cleanup removes a deeper orphan in one round"
+}
+
 test_lock_live_steal_mutex_is_not_reclaimed() {
   local dir state lockdir dead holder_file holder out i lockpid stealpid
   dir=$(make_case lock-live-stealer)
@@ -805,6 +830,7 @@ test_lock_steals_dead_pid_lock
 test_lock_stale_steal_single_winner_under_concurrency
 test_lock_steal_never_chains_past_base_name
 test_lock_steal_second_round_still_converges
+test_lock_steal_missing_canonical_sweeps_deep_orphan
 test_lock_live_steal_mutex_is_not_reclaimed
 test_lock_does_not_steal_live_lock
 test_lock_empty_pid_uses_minimum_grace
