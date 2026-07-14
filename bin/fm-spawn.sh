@@ -847,7 +847,11 @@ if [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   # PROJ_ABS on the very first poll, before the pane has actually moved.
   for _ in $(seq 1 60); do
     p=$(spawn_current_path "$WT_TARGET" || true)
-    if [ -n "$p" ] && [ "$(real_path_or_raw "$p")" != "$PROJ_ABS_REAL" ]; then
+    p_real=$(real_path_or_raw "$p")
+    # Herdr can briefly report the treehouse foreground process at / before
+    # its worktree subshell becomes current. Root can never be the isolated
+    # project worktree, so keep polling instead of treating it as the result.
+    if [ -n "$p" ] && [ "$p_real" != / ] && [ "$p_real" != "$PROJ_ABS_REAL" ]; then
       WT="$p"
       break
     fi

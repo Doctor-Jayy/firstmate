@@ -159,7 +159,17 @@ make_spawn_fakebin() {
 #!/usr/bin/env bash
 set -u
 case "$*" in
-  *"#{pane_current_path}"*) printf '%s\n' "${FM_FAKE_PANE_PATH:-}"; exit 0 ;;
+  *"#{pane_current_path}"*)
+    if [ -n "${FM_FAKE_PANE_PATH_SEQUENCE:-}" ]; then
+      count=$(cat "${FM_FAKE_PANE_PATH_COUNT:?}" 2>/dev/null || printf '0')
+      count=$((count + 1))
+      printf '%s\n' "$count" > "$FM_FAKE_PANE_PATH_COUNT"
+      sed -n "${count}p" "$FM_FAKE_PANE_PATH_SEQUENCE"
+    else
+      printf '%s\n' "${FM_FAKE_PANE_PATH:-}"
+    fi
+    exit 0
+    ;;
 esac
 case "${1:-}" in
   display-message) printf 'firstmate\n'; exit 0 ;;
@@ -186,7 +196,7 @@ run_spawn() {
 }
 
 test_spawn_isolation_abort() {
-  local home proj fakebin out status
+  local home proj fakebin out status sequence count
   home="$TMP_ROOT/spawn-home"
   mkdir -p "$home/data"
   proj=$(make_repo "$TMP_ROOT/spawn-proj")
@@ -211,6 +221,16 @@ test_spawn_isolation_abort() {
   expect_code 0 "$status" "spawn into a genuine isolated worktree should succeed"
   assert_contains "$out" "spawned ok-isolated-ff6" "isolated spawn did not report success"
   assert_not_contains "$out" "did not yield an isolated worktree" "isolated spawn wrongly tripped the guard"
+
+  # Proceed: ignore Herdr's transient root cwd and wait for the real worktree.
+  sequence="$TMP_ROOT/spawn-path-sequence"
+  count="$TMP_ROOT/spawn-path-count"
+  printf '/\n%s\n' "$TMP_ROOT/spawn-wt" > "$sequence"
+  out=$(FM_FAKE_PANE_PATH_SEQUENCE="$sequence" FM_FAKE_PANE_PATH_COUNT="$count" \
+    run_spawn "$home" transient-root-gg7 "$proj" "$TMP_ROOT/spawn-wt" "$fakebin"); status=$?
+  expect_code 0 "$status" "spawn should wait past a transient root cwd"
+  assert_contains "$out" "spawned transient-root-gg7" "spawn did not reach the isolated worktree after transient root"
+  [ "$(cat "$count")" -ge 2 ] || fail "spawn accepted the transient root cwd before reading the worktree"
   pass "fm-spawn: aborts unless the resolved worktree is a genuine, isolated worktree"
 }
 
