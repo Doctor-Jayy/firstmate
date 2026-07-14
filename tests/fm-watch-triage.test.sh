@@ -627,12 +627,29 @@ test_nonterminal_stale_paused_done_run_surfaces_once_per_hash() {
   pane_hash=$(hash_text "idle after checks green")
   printf '%s' "$pane_hash" > "$state/.hash-$key"
   printf '1\n' > "$state/.count-$key"
-  export FM_FAKE_CREW_STATE='state: done · source: run-step · checks green'
+  export FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file"
+  export FM_FAKE_CREW_STATE='state: paused · source: status-log · awaiting the upstream release'
+  export FM_PAUSE_RESURFACE_SECS=999
 
   watch_bg "$state" "$fakebin" "$out"
   pid=$!
-  wait_for_exit "$pid" 40 || fail "the initial declared pause behind a done run-step did not surface"
-  grep -Fx "stale: $window" "$out" >/dev/null || fail "the initial stale did not preserve its plain identity"
+  if ! wait_live "$pid" 30; then
+    reap "$pid"; fail "the initial declared pause was not absorbed: $(cat "$out")"
+  fi
+  [ ! -s "$state/.wake-queue" ] || { reap "$pid"; fail "the initial declared pause queued a wake instead of being absorbed"; }
+  [ "$(cat "$state/.stale-$key" 2>/dev/null || true)" = "$pane_hash" ] || { reap "$pid"; fail "the absorbed pause did not record its stale hash"; }
+  [ ! -e "$state/.stale-surfaced-$key" ] || { reap "$pid"; fail "the absorbed pause was recorded as captain-facing"; }
+  reap "$pid"
+
+  export FM_FAKE_CREW_STATE='state: done · source: run-step · checks green'
+  unset FM_PAUSE_RESURFACE_SECS
+  export FM_STALE_ESCALATE_SECS=0
+  : > "$out"
+  watch_bg "$state" "$fakebin" "$out"
+  pid=$!
+  wait_for_exit "$pid" 40 || fail "the absorbed pause did not surface after the run became checks-green"
+  grep -Fx "stale: $window" "$out" >/dev/null || fail "the checks-green transition did not preserve the stale wake's plain identity"
+  [ "$(cat "$state/.stale-surfaced-$key" 2>/dev/null || true)" = "$pane_hash" ] || fail "the checks-green wake did not record surfaced provenance"
 
   : > "$out"
   watch_bg "$state" "$fakebin" "$out"
@@ -643,7 +660,7 @@ test_nonterminal_stale_paused_done_run_surfaces_once_per_hash() {
   wakes=$(wc -l < "$state/.wake-queue" | tr -d ' ')
   [ "$wakes" = 1 ] || { reap "$pid"; fail "the unchanged paused pane queued $wakes stale wakes instead of one"; }
   reap "$pid"
-  unset FM_FAKE_CREW_STATE
+  unset FM_FAKE_CREW_STATE FM_FAKE_TMUX_WINDOW FM_FAKE_TMUX_CAPTURE FM_STALE_ESCALATE_SECS
   pass "a declared pause behind a checks-green run-step surfaces once per unchanged pane hash"
 }
 

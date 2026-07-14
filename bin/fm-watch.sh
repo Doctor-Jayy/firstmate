@@ -306,9 +306,10 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
 # re-surface epoch so, once past the window, it fires once per window rather than
 # every poll. Advances the stale suppressor to <hash> and flags the key paused.
 handle_paused_stale() {  # <window> <task> <hash>
-  local win=$1 task=$2 h=$3 key statusf mtime age rf rf_age reason
+  local win=$1 task=$2 h=$3 key statusf mtime age rf rf_age reason surfacedf
   key=$(printf '%s' "$win" | tr ':/.' '___')
   printf '%s' "$h" > "$STATE/.stale-$key"
+  surfacedf="$STATE/.stale-surfaced-$key"
   : > "$STATE/.paused-$key"
   rm -f "$STATE/.stale-since-$key" "$STATE/.wedge-escalations-$key"
   statusf="$STATE/$task.status"
@@ -320,6 +321,7 @@ handle_paused_stale() {  # <window> <task> <hash>
   if [ "$age" -ge "$PAUSE_RESURFACE_SECS" ] && [ "$rf_age" -ge "$PAUSE_RESURFACE_SECS" ]; then
     reason="stale: $win (paused ${age}s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds)"
     fm_wake_append stale "$win" "$reason" || exit 1
+    printf '%s' "$h" > "$surfacedf"
     date +%s > "$rf"
     wake "$reason"
   fi
@@ -340,7 +342,7 @@ clear_pause_tracking() {  # <window>
   key=${key//\//_}
   key=${key//./_}
   clear_pause_state "$win"
-  rm -f "$STATE/.stale-$key" "$STATE/.stale-since-$key" "$STATE/.wedge-escalations-$key"
+  rm -f "$STATE/.stale-$key" "$STATE/.stale-surfaced-$key" "$STATE/.stale-since-$key" "$STATE/.wedge-escalations-$key"
 }
 
 pause_state_class() {  # <window> <task>
@@ -368,14 +370,14 @@ pause_state_class() {  # <window> <task>
 }
 
 surface_nonterminal_stale() {  # <window> <hash>
-  local win=$1 h=$2 key
+  local win=$1 h=$2 key surfacedf
   key=$(printf '%s' "$win" | tr ':/.' '___')
-  # pause_state_class can return none for an unchanged paused pane when a
-  # completed run-step outranks the status log. Preserve the first surface for
-  # that hash, but do not wake again on every poll of the identical pane.
-  [ "$(cat "$STATE/.stale-$key" 2>/dev/null || true)" = "$h" ] && return
+  surfacedf="$STATE/.stale-surfaced-$key"
+  [ "$(cat "$STATE/.stale-$key" 2>/dev/null || true)" = "$h" ] \
+    && [ "$(cat "$surfacedf" 2>/dev/null || true)" = "$h" ] && return
   fm_wake_append stale "$win" "stale: $win" || exit 1
   printf '%s' "$h" > "$STATE/.stale-$key"
+  printf '%s' "$h" > "$surfacedf"
   rm -f "$STATE/.stale-since-$key" "$STATE/.paused-$key" "$STATE/.paused-rechecked-$key" "$STATE/.paused-resurfaced-$key"
   wake "stale: $win"
 }
