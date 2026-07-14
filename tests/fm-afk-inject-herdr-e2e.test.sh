@@ -199,6 +199,8 @@ done
 LOOP
 chmod +x "$LOOP_SCRIPT"
 
+herdr_wait_for_pane_prompt "$SESSION" "$PANE_ID" \
+  || fail "the scratch supervisor pane did not become interactive"
 fm_backend_herdr_send_text_line "$SUPERVISOR_TARGET" "bash '$LOOP_SCRIPT' '$LOG_FILE'" \
   || fail "could not start the supervisor-loop script in the scratch herdr pane"
 sleep 1  # let the loop start and settle

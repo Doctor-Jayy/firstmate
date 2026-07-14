@@ -21,3 +21,16 @@ herdr_refuse_if_default() { # <session>
 herdr_safe_stop_and_delete() { # <session>
   fm_herdr_lab_teardown "$1"
 }
+
+herdr_wait_for_pane_prompt() { # <session> <pane>
+  local session=$1 pane=$2 attempt=0 capture
+  while [ "$attempt" -lt 50 ]; do
+    capture=$(fm_herdr_lab_cli "$session" pane read "$pane" --source recent --lines 200 2>/dev/null || true)
+    case "$capture" in
+      *$'\n❯'|*$'\n›'|*$'\n$'|*$'\n%'|*$'\n#'|*$'\n>') return 0 ;;
+    esac
+    sleep 0.1
+    attempt=$((attempt + 1))
+  done
+  return 1
+}

@@ -40,6 +40,19 @@ export PATH
 . "$ROOT/bin/fm-backend.sh"
 fm_backend_source tmux || fail "fm_backend_source tmux failed"
 
+wait_for_tmux_prompt() { # <target>
+  local target=$1 attempt=0 capture
+  while [ "$attempt" -lt 50 ]; do
+    capture=$(tmux capture-pane -p -t "$target" 2>/dev/null || true)
+    case "$capture" in
+      *$'\n❯'*|*$'\n›'*|*$'\n$ '*|*$'\n% '*|*$'\n# '*|*$'\n> '*) return 0 ;;
+    esac
+    sleep 0.1
+    attempt=$((attempt + 1))
+  done
+  return 1
+}
+
 SESSION="smoke"
 WINDOW="fm-smoke1"
 TARGET="$SESSION:$WINDOW"
@@ -62,6 +75,7 @@ pass "real tmux: fm_backend_tmux_create_task creates a window and refuses a dupl
 
 # --- send text + Enter -------------------------------------------------------
 
+wait_for_tmux_prompt "$TARGET" || fail "real tmux: task window did not become interactive"
 tmux send-keys -t "$TARGET" "cd /tmp && PS1='smoke\$ '" Enter
 sleep 0.3
 tmux send-keys -t "$TARGET" -l "clear" ; tmux send-keys -t "$TARGET" Enter
