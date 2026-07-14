@@ -370,6 +370,10 @@ pause_state_class() {  # <window> <task>
 surface_nonterminal_stale() {  # <window> <hash>
   local win=$1 h=$2 key
   key=$(printf '%s' "$win" | tr ':/.' '___')
+  # pause_state_class can return none for an unchanged paused pane when a
+  # completed run-step outranks the status log. Preserve the first surface for
+  # that hash, but do not wake again on every poll of the identical pane.
+  [ "$(cat "$STATE/.stale-$key" 2>/dev/null || true)" = "$h" ] && return
   fm_wake_append stale "$win" "stale: $win" || exit 1
   printf '%s' "$h" > "$STATE/.stale-$key"
   rm -f "$STATE/.stale-since-$key" "$STATE/.paused-$key" "$STATE/.paused-rechecked-$key" "$STATE/.paused-resurfaced-$key"

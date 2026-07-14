@@ -612,6 +612,41 @@ test_nonterminal_stale_paused_absorbed_then_resurfaced() {
   pass "a declared pause is absorbed on first sight, then re-surfaced as a recheck past the threshold, never wedge-escalated"
 }
 
+# A completed checks-green run-step outranks a declared pause in crew state, so
+# the pause is not absorbable. The first stale sight must still surface, but the
+# same unchanged pane hash must not surface again on every restarted watcher poll.
+test_nonterminal_stale_paused_done_run_surfaces_once_per_hash() {
+  local dir state fakebin out capture_file window key pane_hash sig pid wakes
+  dir=$(make_case nonterminal-stale-paused-done-run); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"; window="test:fm-paused-done"
+  printf 'idle after checks green\n' > "$capture_file"
+  printf 'window=%s\nkind=ship\n' "$window" > "$state/paused-done.meta"
+  printf 'paused: awaiting the upstream release\n' > "$state/paused-done.status"
+  sig=$(seen_sig "$state/paused-done.status"); printf '%s' "$sig" > "$state/.seen-paused-done_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text "idle after checks green")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  export FM_FAKE_CREW_STATE='state: done · source: run-step · checks green'
+
+  watch_bg "$state" "$fakebin" "$out"
+  pid=$!
+  wait_for_exit "$pid" 40 || fail "the initial declared pause behind a done run-step did not surface"
+  grep -Fx "stale: $window" "$out" >/dev/null || fail "the initial stale did not preserve its plain identity"
+
+  : > "$out"
+  watch_bg "$state" "$fakebin" "$out"
+  pid=$!
+  if ! wait_live "$pid" 30; then
+    reap "$pid"; fail "the unchanged paused pane resurfaced on the next poll: $(cat "$out")"
+  fi
+  wakes=$(wc -l < "$state/.wake-queue" | tr -d ' ')
+  [ "$wakes" = 1 ] || { reap "$pid"; fail "the unchanged paused pane queued $wakes stale wakes instead of one"; }
+  reap "$pid"
+  unset FM_FAKE_CREW_STATE
+  pass "a declared pause behind a checks-green run-step surfaces once per unchanged pane hash"
+}
+
 test_secondmate_paused_resurfaces_in_normal_mode() {
   local dir state fakebin out capture_file statusf window key pane_hash sig pid back
   dir=$(make_case secondmate-paused-resurface); state="$dir/state"; fakebin="$dir/fakebin"
@@ -1138,6 +1173,7 @@ test_wedge_escalation_marks_demand_deep_inspection_after_threshold
 test_wedge_escalation_resets_when_pane_becomes_active
 test_nonterminal_stale_not_working_surfaced
 test_nonterminal_stale_paused_absorbed_then_resurfaced
+test_nonterminal_stale_paused_done_run_surfaces_once_per_hash
 test_secondmate_paused_resurfaces_in_normal_mode
 test_secondmate_nonpaused_stale_remains_suppressed
 test_secondmate_unpause_clears_pause_tracking
