@@ -1229,6 +1229,66 @@ test_afk_paused_changed_pane_hands_off_plain_stale() {
   pass "AFK changed paused panes hand off plain stale identities for daemon-owned pause triage"
 }
 
+test_afk_hash_cycle_invalidates_normal_surface_provenance() {
+  local dir state fakebin out capture_file statusf window key sig pid pane_hash_a wakes
+  dir=$(make_case afk-hash-cycle); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"; window="test:fm-afk-cycle"
+  printf 'window=%s\nkind=ship\n' "$window" > "$state/afk-cycle.meta"
+  statusf="$state/afk-cycle.status"
+  printf 'paused: awaiting the upstream release\n' > "$statusf"
+  sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-afk-cycle_status"
+  key=$(printf '%s' "$window" | tr '.:/' '___')
+  printf 'idle pane A\n' > "$capture_file"
+  pane_hash_a=$(hash_text "idle pane A")
+  printf '%s' "$pane_hash_a" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  export FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file"
+  export FM_FAKE_CREW_STATE='state: done · source: run-step · checks green'
+
+  watch_bg "$state" "$fakebin" "$out"
+  pid=$!
+  wait_for_exit "$pid" 40 || fail "normal mode did not surface the initial A episode"
+  [ "$(cat "$state/.stale-surfaced-$key" 2>/dev/null || true)" = "$pane_hash_a" ] \
+    || fail "normal mode did not record surfaced provenance for A"
+
+  date '+%s' > "$state/.afk"
+  printf 'idle pane B\n' > "$capture_file"
+  : > "$out"
+  watch_bg "$state" "$fakebin" "$out"
+  pid=$!
+  wait_for_exit "$pid" 50 || fail "AFK mode did not advance the stale episode to B"
+  [ ! -e "$state/.stale-surfaced-$key" ] || fail "AFK advance to B retained A's surfaced provenance"
+
+  printf 'idle pane A\n' > "$capture_file"
+  : > "$out"
+  watch_bg "$state" "$fakebin" "$out"
+  pid=$!
+  wait_for_exit "$pid" 50 || fail "AFK mode did not advance the stale episode back to A"
+  [ ! -e "$state/.stale-surfaced-$key" ] || fail "AFK return to A restored stale surfaced provenance"
+
+  rm -f "$state/.afk"
+  : > "$out"
+  watch_bg "$state" "$fakebin" "$out"
+  pid=$!
+  wait_for_exit "$pid" 40 || fail "normal mode suppressed the recurring A episode after the AFK cycle"
+  [ "$(cat "$state/.stale-surfaced-$key" 2>/dev/null || true)" = "$pane_hash_a" ] \
+    || fail "normal mode did not record the recurring A episode as surfaced"
+  wakes=$(wc -l < "$state/.wake-queue" | tr -d ' ')
+  [ "$wakes" = 4 ] || fail "the initial, AFK, and recurring episodes queued $wakes wakes instead of four"
+
+  : > "$out"
+  watch_bg "$state" "$fakebin" "$out"
+  pid=$!
+  if ! wait_live "$pid" 30; then
+    reap "$pid"; fail "normal mode repeated the recurring A wake: $(cat "$out")"
+  fi
+  wakes=$(wc -l < "$state/.wake-queue" | tr -d ' ')
+  [ "$wakes" = 4 ] || { reap "$pid"; fail "same-hash dedupe left $wakes wakes instead of four"; }
+  reap "$pid"
+  unset FM_FAKE_CREW_STATE FM_FAKE_TMUX_WINDOW FM_FAKE_TMUX_CAPTURE
+  pass "AFK A-B-A stale cycles invalidate normal-mode surfaced provenance without breaking same-hash dedupe"
+}
+
 test_signal_reason_is_actionable_classifier
 test_stale_is_terminal_classifier
 test_scan_captain_relevant_statuses_classifier
@@ -1263,3 +1323,4 @@ test_heartbeat_backstop_surfaces_unsurfaced_status
 test_beacon_stays_fresh_while_absorbing
 test_afk_present_reverts_watcher_to_one_shot
 test_afk_paused_changed_pane_hands_off_plain_stale
+test_afk_hash_cycle_invalidates_normal_surface_provenance

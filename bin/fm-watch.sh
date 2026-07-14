@@ -295,6 +295,14 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
   esac
 }
 
+advance_stale_hash() {  # <key> <hash>
+  local key=$1 h=$2 stalef surfacedf
+  stalef="$STATE/.stale-$key"
+  surfacedf="$STATE/.stale-surfaced-$key"
+  [ "$(cat "$stalef" 2>/dev/null || true)" = "$h" ] || rm -f "$surfacedf"
+  printf '%s' "$h" > "$stalef"
+}
+
 # Absorb a stale pane whose crew is in a DECLARED external-wait pause (paused:),
 # and re-surface it once every PAUSE_RESURFACE_SECS for a recheck so it cannot rot
 # invisibly. Called on any stale poll once the crew is known paused (first sight,
@@ -306,12 +314,10 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
 # re-surface epoch so, once past the window, it fires once per window rather than
 # every poll. Advances the stale suppressor to <hash> and flags the key paused.
 handle_paused_stale() {  # <window> <task> <hash>
-  local win=$1 task=$2 h=$3 key statusf mtime age rf rf_age reason surfacedf recheckf previous
+  local win=$1 task=$2 h=$3 key statusf mtime age rf rf_age reason surfacedf recheckf
   key=$(printf '%s' "$win" | tr ':/.' '___')
   surfacedf="$STATE/.stale-surfaced-$key"
-  previous=$(cat "$STATE/.stale-$key" 2>/dev/null || true)
-  [ "$previous" = "$h" ] || rm -f "$surfacedf"
-  printf '%s' "$h" > "$STATE/.stale-$key"
+  advance_stale_hash "$key" "$h"
   recheckf="$STATE/.paused-rechecked-$key"
   [ "$(cat "$recheckf" 2>/dev/null || true)" = paused ] || printf paused > "$recheckf"
   : > "$STATE/.paused-$key"
@@ -379,7 +385,7 @@ surface_nonterminal_stale() {  # <window> <hash>
   [ "$(cat "$STATE/.stale-$key" 2>/dev/null || true)" = "$h" ] \
     && [ "$(cat "$surfacedf" 2>/dev/null || true)" = "$h" ] && return
   fm_wake_append stale "$win" "stale: $win" || exit 1
-  printf '%s' "$h" > "$STATE/.stale-$key"
+  advance_stale_hash "$key" "$h"
   printf '%s' "$h" > "$surfacedf"
   rm -f "$STATE/.stale-since-$key" "$STATE/.paused-$key" "$STATE/.paused-resurfaced-$key"
   wake "stale: $win"
@@ -759,7 +765,7 @@ EOF
           # Daemon owns triage: one-shot per distinct stale hash, as before.
           if [ "$(cat "$sf" 2>/dev/null || true)" != "$h" ]; then
             fm_wake_append stale "$w" "stale: $w" || exit 1
-            printf '%s' "$h" > "$sf"
+            advance_stale_hash "$key" "$h"
             wake "stale: $w"
           fi
         elif stale_is_terminal "$w" "$STATE"; then
@@ -779,12 +785,12 @@ EOF
           # over the log) a chance to override before trusting the log.
           if [ "$(cat "$sf" 2>/dev/null || true)" != "$h" ]; then
             if crew_is_provably_working "$(window_to_task "$w" "$STATE")"; then
-              printf '%s' "$h" > "$sf"
+              advance_stale_hash "$key" "$h"
               date +%s > "$ssf"
               triage_log "absorbed stale (provably working, overriding a stale captain-relevant status): $w"
             else
               fm_wake_append stale "$w" "stale: $w" || exit 1
-              printf '%s' "$h" > "$sf"
+              advance_stale_hash "$key" "$h"
               rm -f "$ssf"
               mark_surfaced "$STATE/$(window_to_task "$w" "$STATE").status"
               wake "stale: $w"
@@ -819,7 +825,7 @@ EOF
             case "$(crew_absorb_class "$task")" in
               working)
                 clear_pause_tracking "$w"
-                printf '%s' "$h" > "$sf"
+                advance_stale_hash "$key" "$h"
                 date +%s > "$ssf"
                 triage_log "absorbed non-terminal stale (provably working): $w"
                 ;;
@@ -836,7 +842,7 @@ EOF
               case "$(pause_state_class "$w" "$task")" in
                 paused)  handle_paused_stale "$w" "$task" "$h" ;;
                 working) rm -f "$pf" "$STATE/.paused-resurfaced-$key"
-                         printf '%s' "$h" > "$sf"
+                         advance_stale_hash "$key" "$h"
                          wedge_timer_check "$w" "$ssf" "non-terminal stale (provably working after a declared pause)" "$ewf"
                          triage_log "absorbed non-terminal stale (provably working): $w" ;;
                 *)       surface_nonterminal_stale "$w" "$h" ;;
