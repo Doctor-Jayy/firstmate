@@ -306,10 +306,12 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
 # re-surface epoch so, once past the window, it fires once per window rather than
 # every poll. Advances the stale suppressor to <hash> and flags the key paused.
 handle_paused_stale() {  # <window> <task> <hash>
-  local win=$1 task=$2 h=$3 key statusf mtime age rf rf_age reason surfacedf recheckf
+  local win=$1 task=$2 h=$3 key statusf mtime age rf rf_age reason surfacedf recheckf previous
   key=$(printf '%s' "$win" | tr ':/.' '___')
-  printf '%s' "$h" > "$STATE/.stale-$key"
   surfacedf="$STATE/.stale-surfaced-$key"
+  previous=$(cat "$STATE/.stale-$key" 2>/dev/null || true)
+  [ "$previous" = "$h" ] || rm -f "$surfacedf"
+  printf '%s' "$h" > "$STATE/.stale-$key"
   recheckf="$STATE/.paused-rechecked-$key"
   [ "$(cat "$recheckf" 2>/dev/null || true)" = paused ] || printf paused > "$recheckf"
   : > "$STATE/.paused-$key"

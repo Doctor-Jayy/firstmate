@@ -616,7 +616,7 @@ test_nonterminal_stale_paused_absorbed_then_resurfaced() {
 # the pause is not absorbable. The first stale sight must still surface, but the
 # same unchanged pane hash must not surface again on every restarted watcher poll.
 test_nonterminal_stale_paused_done_run_surfaces_once_per_hash() {
-  local dir state fakebin out capture_file window key pane_hash sig pid wakes state_reads back
+  local dir state fakebin out capture_file window key pane_hash pane_hash_b sig pid wakes state_reads back
   dir=$(make_case nonterminal-stale-paused-done-run); state="$dir/state"; fakebin="$dir/fakebin"
   out="$dir/watch.out"; capture_file="$dir/pane.txt"; window="test:fm-paused-done"
   state_reads="$dir/crew-state-reads"
@@ -668,8 +668,59 @@ test_nonterminal_stale_paused_done_run_surfaces_once_per_hash() {
   [ "$wakes" = 1 ] || { reap "$pid"; fail "the unchanged paused pane queued $wakes stale wakes instead of one"; }
   [ "$(wc -l < "$state_reads" | tr -d ' ')" = 2 ] || { reap "$pid"; fail "the surfaced unchanged pause bypassed the bounded authoritative-state cadence"; }
   reap "$pid"
+
+  export FM_FAKE_CREW_STATE='state: paused · source: status-log · awaiting the upstream release'
+  rm -f "$state/.paused-rechecked-$key"
+  printf 'idle after checks green, pane B\n' > "$capture_file"
+  pane_hash_b=$(hash_text "idle after checks green, pane B")
+  : > "$out"
+  watch_bg "$state" "$fakebin" "$out"
+  pid=$!
+  if ! wait_live "$pid" 30; then
+    reap "$pid"; fail "the intervening paused pane hash unexpectedly surfaced: $(cat "$out")"
+  fi
+  [ "$(cat "$state/.stale-$key" 2>/dev/null || true)" = "$pane_hash_b" ] || { reap "$pid"; fail "the intervening paused pane hash was not recorded"; }
+  [ ! -e "$state/.stale-surfaced-$key" ] || { reap "$pid"; fail "the intervening pane retained stale surfaced provenance"; }
+  [ "$(wc -l < "$state_reads" | tr -d ' ')" = 3 ] || { reap "$pid"; fail "the intervening paused pane bypassed bounded authoritative classification"; }
+  reap "$pid"
+
+  printf 'idle after checks green\n' > "$capture_file"
+  : > "$out"
+  watch_bg "$state" "$fakebin" "$out"
+  pid=$!
+  if ! wait_live "$pid" 30; then
+    reap "$pid"; fail "the recurring paused pane hash unexpectedly surfaced: $(cat "$out")"
+  fi
+  [ "$(cat "$state/.stale-$key" 2>/dev/null || true)" = "$pane_hash" ] || { reap "$pid"; fail "the recurring paused pane hash was not recorded"; }
+  [ ! -e "$state/.stale-surfaced-$key" ] || { reap "$pid"; fail "the recurring pane reused surfaced provenance from its earlier episode"; }
+  [ "$(wc -l < "$state_reads" | tr -d ' ')" = 3 ] || { reap "$pid"; fail "the recurring paused pane bypassed the bounded authoritative-state cadence"; }
+  reap "$pid"
+
+  export FM_FAKE_CREW_STATE='state: done · source: run-step · checks green'
+  back=$(( $(date +%s) - 2000 ))
+  if [ "$(uname)" = Darwin ]; then touch -mt "$(date -r "$back" '+%Y%m%d%H%M.%S')" "$state/.paused-rechecked-$key"
+  else touch -m -d "@$back" "$state/.paused-rechecked-$key"; fi
+  : > "$out"
+  watch_bg "$state" "$fakebin" "$out"
+  pid=$!
+  wait_for_exit "$pid" 40 || fail "the recurring pane episode did not surface after becoming checks-green"
+  grep -Fx "stale: $window" "$out" >/dev/null || fail "the recurring pane episode did not preserve the stale wake's plain identity"
+  wakes=$(wc -l < "$state/.wake-queue" | tr -d ' ')
+  [ "$wakes" = 2 ] || fail "the recurring pane episode queued $wakes stale wakes instead of two total episode wakes"
+  [ "$(wc -l < "$state_reads" | tr -d ' ')" = 4 ] || fail "the recurring checks-green episode did not perform exactly one authoritative recheck"
+
+  : > "$out"
+  watch_bg "$state" "$fakebin" "$out"
+  pid=$!
+  if ! wait_live "$pid" 30; then
+    reap "$pid"; fail "the recurring pane episode repeated its captain-facing wake: $(cat "$out")"
+  fi
+  wakes=$(wc -l < "$state/.wake-queue" | tr -d ' ')
+  [ "$wakes" = 2 ] || { reap "$pid"; fail "the recurring unchanged pane queued $wakes stale wakes instead of two"; }
+  [ "$(wc -l < "$state_reads" | tr -d ' ')" = 4 ] || { reap "$pid"; fail "the recurring surfaced pane bypassed the bounded authoritative-state cadence"; }
+  reap "$pid"
   unset FM_FAKE_CREW_STATE FM_FAKE_CREW_STATE_LOG FM_FAKE_TMUX_WINDOW FM_FAKE_TMUX_CAPTURE FM_STALE_ESCALATE_SECS
-  pass "a declared pause behind a checks-green run-step surfaces once per unchanged pane hash"
+  pass "declared pauses surface once per stale episode, including a recurring hash, with bounded authoritative rechecks"
 }
 
 test_secondmate_paused_resurfaces_in_normal_mode() {
