@@ -616,9 +616,10 @@ test_nonterminal_stale_paused_absorbed_then_resurfaced() {
 # the pause is not absorbable. The first stale sight must still surface, but the
 # same unchanged pane hash must not surface again on every restarted watcher poll.
 test_nonterminal_stale_paused_done_run_surfaces_once_per_hash() {
-  local dir state fakebin out capture_file window key pane_hash sig pid wakes
+  local dir state fakebin out capture_file window key pane_hash sig pid wakes state_reads back
   dir=$(make_case nonterminal-stale-paused-done-run); state="$dir/state"; fakebin="$dir/fakebin"
   out="$dir/watch.out"; capture_file="$dir/pane.txt"; window="test:fm-paused-done"
+  state_reads="$dir/crew-state-reads"
   printf 'idle after checks green\n' > "$capture_file"
   printf 'window=%s\nkind=ship\n' "$window" > "$state/paused-done.meta"
   printf 'paused: awaiting the upstream release\n' > "$state/paused-done.status"
@@ -628,8 +629,10 @@ test_nonterminal_stale_paused_done_run_surfaces_once_per_hash() {
   printf '%s' "$pane_hash" > "$state/.hash-$key"
   printf '1\n' > "$state/.count-$key"
   export FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file"
+  export FM_FAKE_CREW_STATE_LOG="$state_reads"
   export FM_FAKE_CREW_STATE='state: paused · source: status-log · awaiting the upstream release'
   export FM_PAUSE_RESURFACE_SECS=999
+  export FM_STALE_ESCALATE_SECS=999
 
   watch_bg "$state" "$fakebin" "$out"
   pid=$!
@@ -639,17 +642,21 @@ test_nonterminal_stale_paused_done_run_surfaces_once_per_hash() {
   [ ! -s "$state/.wake-queue" ] || { reap "$pid"; fail "the initial declared pause queued a wake instead of being absorbed"; }
   [ "$(cat "$state/.stale-$key" 2>/dev/null || true)" = "$pane_hash" ] || { reap "$pid"; fail "the absorbed pause did not record its stale hash"; }
   [ ! -e "$state/.stale-surfaced-$key" ] || { reap "$pid"; fail "the absorbed pause was recorded as captain-facing"; }
+  [ "$(wc -l < "$state_reads" | tr -d ' ')" = 1 ] || { reap "$pid"; fail "the absorbed pause was authoritatively classified more than once inside the bounded cadence"; }
   reap "$pid"
 
   export FM_FAKE_CREW_STATE='state: done · source: run-step · checks green'
   unset FM_PAUSE_RESURFACE_SECS
-  export FM_STALE_ESCALATE_SECS=0
+  back=$(( $(date +%s) - 2000 ))
+  if [ "$(uname)" = Darwin ]; then touch -mt "$(date -r "$back" '+%Y%m%d%H%M.%S')" "$state/.paused-rechecked-$key"
+  else touch -m -d "@$back" "$state/.paused-rechecked-$key"; fi
   : > "$out"
   watch_bg "$state" "$fakebin" "$out"
   pid=$!
   wait_for_exit "$pid" 40 || fail "the absorbed pause did not surface after the run became checks-green"
   grep -Fx "stale: $window" "$out" >/dev/null || fail "the checks-green transition did not preserve the stale wake's plain identity"
   [ "$(cat "$state/.stale-surfaced-$key" 2>/dev/null || true)" = "$pane_hash" ] || fail "the checks-green wake did not record surfaced provenance"
+  [ "$(wc -l < "$state_reads" | tr -d ' ')" = 2 ] || fail "the eligible checks-green transition did not perform exactly one authoritative recheck"
 
   : > "$out"
   watch_bg "$state" "$fakebin" "$out"
@@ -659,8 +666,9 @@ test_nonterminal_stale_paused_done_run_surfaces_once_per_hash() {
   fi
   wakes=$(wc -l < "$state/.wake-queue" | tr -d ' ')
   [ "$wakes" = 1 ] || { reap "$pid"; fail "the unchanged paused pane queued $wakes stale wakes instead of one"; }
+  [ "$(wc -l < "$state_reads" | tr -d ' ')" = 2 ] || { reap "$pid"; fail "the surfaced unchanged pause bypassed the bounded authoritative-state cadence"; }
   reap "$pid"
-  unset FM_FAKE_CREW_STATE FM_FAKE_TMUX_WINDOW FM_FAKE_TMUX_CAPTURE FM_STALE_ESCALATE_SECS
+  unset FM_FAKE_CREW_STATE FM_FAKE_CREW_STATE_LOG FM_FAKE_TMUX_WINDOW FM_FAKE_TMUX_CAPTURE FM_STALE_ESCALATE_SECS
   pass "a declared pause behind a checks-green run-step surfaces once per unchanged pane hash"
 }
 

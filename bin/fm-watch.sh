@@ -306,10 +306,12 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
 # re-surface epoch so, once past the window, it fires once per window rather than
 # every poll. Advances the stale suppressor to <hash> and flags the key paused.
 handle_paused_stale() {  # <window> <task> <hash>
-  local win=$1 task=$2 h=$3 key statusf mtime age rf rf_age reason surfacedf
+  local win=$1 task=$2 h=$3 key statusf mtime age rf rf_age reason surfacedf recheckf
   key=$(printf '%s' "$win" | tr ':/.' '___')
   printf '%s' "$h" > "$STATE/.stale-$key"
   surfacedf="$STATE/.stale-surfaced-$key"
+  recheckf="$STATE/.paused-rechecked-$key"
+  [ "$(cat "$recheckf" 2>/dev/null || true)" = paused ] || printf paused > "$recheckf"
   : > "$STATE/.paused-$key"
   rm -f "$STATE/.stale-since-$key" "$STATE/.wedge-escalations-$key"
   statusf="$STATE/$task.status"
@@ -357,15 +359,14 @@ pause_state_class() {  # <window> <task>
     crew_absorb_class "$task"
     return
   fi
-  if [ -e "$STATE/.paused-$key" ] && [ "$(age_of "$recheck_file")" -lt "$STALE_ESCALATE_SECS" ]; then
-    printf 'paused'
-    return
+  if [ "$(age_of "$recheck_file")" -lt "$STALE_ESCALATE_SECS" ]; then
+    class=$(cat "$recheck_file" 2>/dev/null || true)
+    case "$class" in
+      paused|working|none) printf '%s' "$class"; return ;;
+    esac
   fi
   class=$(crew_absorb_class "$task")
-  case "$class" in
-    paused) date +%s > "$recheck_file" ;;
-    *) rm -f "$recheck_file" ;;
-  esac
+  printf '%s' "$class" > "$recheck_file"
   printf '%s' "$class"
 }
 
@@ -378,7 +379,7 @@ surface_nonterminal_stale() {  # <window> <hash>
   fm_wake_append stale "$win" "stale: $win" || exit 1
   printf '%s' "$h" > "$STATE/.stale-$key"
   printf '%s' "$h" > "$surfacedf"
-  rm -f "$STATE/.stale-since-$key" "$STATE/.paused-$key" "$STATE/.paused-rechecked-$key" "$STATE/.paused-resurfaced-$key"
+  rm -f "$STATE/.stale-since-$key" "$STATE/.paused-$key" "$STATE/.paused-resurfaced-$key"
   wake "stale: $win"
 }
 
@@ -832,7 +833,7 @@ EOF
             if [ -e "$pf" ] || status_is_paused "$(last_status_line "$STATE/$task.status")"; then
               case "$(pause_state_class "$w" "$task")" in
                 paused)  handle_paused_stale "$w" "$task" "$h" ;;
-                working) clear_pause_state "$w"
+                working) rm -f "$pf" "$STATE/.paused-resurfaced-$key"
                          printf '%s' "$h" > "$sf"
                          wedge_timer_check "$w" "$ssf" "non-terminal stale (provably working after a declared pause)" "$ewf"
                          triage_log "absorbed non-terminal stale (provably working): $w" ;;
