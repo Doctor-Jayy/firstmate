@@ -249,6 +249,16 @@ wait_for_pane_input_pending() {
   return 1
 }
 
+wait_for_log_pattern() { # <extended-regexp>
+  local pattern=$1 i=0
+  while [ "$i" -lt 150 ]; do
+    grep -qE "$pattern" "$LOG_FILE" 2>/dev/null && return 0
+    sleep 0.1
+    i=$((i + 1))
+  done
+  return 1
+}
+
 selfcheck_pane_input_pending
 
 # --- Scenario A: human-partial-input ----------------------------------------
@@ -284,17 +294,13 @@ test_scenario_a() {
 
   # Now submit the human's text (Enter). The pane goes idle.
   "$REAL_TMUX" -L "$SOCKET" send-keys -t "$SUPERVISOR_PANE" Enter
-  sleep 0.5
-
-  # Wait for the daemon to retry injection (housekeeping tick = 1s).
-  sleep 6
 
   # Assert: human text was submitted alone (as a user message).
-  grep -q 'human draft text' "$LOG_FILE" \
+  wait_for_log_pattern 'human draft text' \
     || fail "Scenario A: human text not in log after submit"
 
   # Assert: digest arrived after the pane went idle.
-  grep -q 'Supervisor escalate' "$LOG_FILE" \
+  wait_for_log_pattern 'Supervisor escalate' \
     || fail "Scenario A: digest not injected after pane went idle"
 
   # Assert: human text and digest are on SEPARATE lines (never merged).
@@ -338,8 +344,10 @@ test_scenario_b() {
   echo "done: PR https://example.test/pr/200" > "$STATE_DIR/fake-c1.status"
 
   # Wait for the daemon to process the escalation and attempt inject (with the
-  # swallowed Enter, the retry path fires).
-  sleep 8
+  # swallowed Enter, the retry path fires), then leave a short duplicate window.
+  wait_for_log_pattern 'Supervisor escalate' \
+    || fail "Scenario B: digest did not arrive after swallowed Enter"
+  sleep 3
 
   # Assert: exactly ONE digest in the log (no duplicate, no loss).
   local digest_count
@@ -386,7 +394,9 @@ test_scenario_c() {
   start_daemon
 
   echo "done: PR https://example.test/pr/300" > "$STATE_DIR/fake-c1.status"
-  sleep 6
+  wait_for_log_pattern 'Supervisor escalate' \
+    || fail "Scenario C: digest did not arrive"
+  sleep 3
 
   # Exactly one digest line in the submitted log (no duplicate, no loss).
   local digest_count

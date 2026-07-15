@@ -311,6 +311,7 @@ test_lock_empty_pid_uses_minimum_grace() {
   mkdir "$lockdir"
   out=$(FM_LOCK_STALE_AFTER=0 FM_STATE_OVERRIDE="$state" bash -c '
     . "$1"
+    fm_path_age() { echo 0; }
     if fm_lock_try_acquire "$2"; then rc=0; else rc=1; fi
     printf "rc=%s held=%s\n" "$rc" "${FM_LOCK_HELD_PID:-}"
   ' _ "$LIB" "$lockdir")
