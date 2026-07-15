@@ -199,6 +199,8 @@ done
 LOOP
 chmod +x "$LOOP_SCRIPT"
 
+herdr_wait_for_pane_prompt "$SESSION" "$PANE_ID" \
+  || fail "the scratch supervisor pane did not become interactive"
 fm_backend_herdr_send_text_line "$SUPERVISOR_TARGET" "bash '$LOOP_SCRIPT' '$LOG_FILE'" \
   || fail "could not start the supervisor-loop script in the scratch herdr pane"
 sleep 1  # let the loop start and settle
@@ -287,6 +289,16 @@ reset_state() {
   : > "$LOG_FILE"
 }
 
+wait_for_log_pattern() { # <extended-regexp>
+  local pattern=$1 i=0
+  while [ "$i" -lt 200 ]; do
+    grep -qE "$pattern" "$LOG_FILE" 2>/dev/null && return 0
+    sleep 0.1
+    i=$((i + 1))
+  done
+  return 1
+}
+
 # --- pane_input_pending environment self-check ------------------------------
 # Verify pane_input_pending (dispatched through fm_backend_composer_state for
 # backend=herdr) can detect typed text in THIS real herdr environment before
@@ -333,13 +345,10 @@ test_scenario_a() {
   fi
 
   fm_backend_herdr_send_key "$SUPERVISOR_TARGET" Enter
-  sleep 0.5
 
-  sleep 8
-
-  grep -q 'human draft text' "$LOG_FILE" \
+  wait_for_log_pattern 'human draft text' \
     || fail "Scenario A: human text not in log after submit"
-  grep -q 'Supervisor escalate' "$LOG_FILE" \
+  wait_for_log_pattern 'Supervisor escalate' \
     || fail "Scenario A: digest not injected after the pane went idle"
   if grep -q 'human draft text.*Supervisor escalate' "$LOG_FILE" || \
      grep -q 'Supervisor escalate.*human draft text' "$LOG_FILE"; then
@@ -376,7 +385,9 @@ test_scenario_b() {
 
   echo "done: PR https://example.test/pr/200" > "$STATE_DIR/fake-c1.status"
 
-  sleep 10
+  wait_for_log_pattern 'Supervisor escalate' \
+    || fail "Scenario B: digest did not arrive after swallowed Enter"
+  sleep 3
 
   local digest_count
   digest_count=$(grep -c 'Supervisor escalate' "$LOG_FILE" || true)
@@ -412,7 +423,9 @@ test_scenario_c() {
   start_daemon
 
   echo "done: PR https://example.test/pr/300" > "$STATE_DIR/fake-c1.status"
-  sleep 8
+  wait_for_log_pattern 'Supervisor escalate' \
+    || fail "Scenario C: digest did not arrive"
+  sleep 3
 
   local digest_count
   digest_count=$(grep -c 'Supervisor escalate' "$LOG_FILE" || true)

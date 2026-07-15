@@ -813,12 +813,14 @@ test_busy_state_unknown_on_no_agent() {
 # --- composer_state: structural border-row classification --------------------
 
 test_composer_state_bare_prompt_is_empty() {
-  local dir log resp fb out
-  dir="$TMP_ROOT/composer-bare"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
-  printf '  ╭────────────────────────╮\n  │ ❯                      │\n  ╰──────── Composer ─────╯\n\n  Shift+Tab:mode\n' > "$resp/1.out"
-  fb=$(make_herdr_fakebin "$dir")
-  out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
-    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_composer_state default:w1:p2' "$ROOT" )
+  local dir fixture out
+  dir="$TMP_ROOT/composer-bare"; mkdir -p "$dir"; fixture="$dir/pane.out"
+  printf '  ╭────────────────────────╮\n  │ ❯                      │\n  ╰──────── Composer ─────╯\n\n  Shift+Tab:mode\n' > "$fixture"
+  out=$( FM_COMPOSER_FIXTURE="$fixture" bash -c '
+    . "$0/bin/backends/herdr.sh"
+    fm_backend_herdr_capture_ansi() { cat "$FM_COMPOSER_FIXTURE"; }
+    fm_backend_herdr_composer_state default:w1:p2
+  ' "$ROOT" )
   [ "$out" = empty ] || fail "a bare prompt glyph should read as empty, got '$out'"
   pass "fm_backend_herdr_composer_state: a bare '❯' composer row reads empty"
 }
@@ -915,6 +917,27 @@ test_composer_state_claude_unbordered_prompt_is_empty() {
     bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_composer_state default:w1:p2' "$ROOT" )
   [ "$out" = empty ] || fail "a genuinely idle, unbordered real-claude '❯' prompt row (no border glyph anywhere in view) should read empty, got '$out' (regression: this used to read 'unknown' forever, which is exactly what broke escalate_flush's buffer-clear)"
   pass "fm_backend_herdr_composer_state: a real-claude unbordered '❯' prompt row (no border box in view) reads empty"
+}
+
+test_composer_state_bare_prompt_regex_is_c_locale_safe() {
+  local dir fixture out
+  dir="$TMP_ROOT/composer-bare-c-locale"; mkdir -p "$dir"; fixture="$dir/pane.out"
+  printf '\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\n\xe2\x9d\xaf\n\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\n' > "$fixture"
+  out=$( LC_ALL=C FM_COMPOSER_FIXTURE="$fixture" bash -c '
+    . "$0/bin/backends/herdr.sh"
+    fm_backend_herdr_capture_ansi() { cat "$FM_COMPOSER_FIXTURE"; }
+    fm_backend_herdr_composer_state default:w1:p2
+  ' "$ROOT" )
+  [ "$out" = empty ] || fail "a real unbordered '❯' row should read empty in the C locale, got '$out'"
+
+  printf '╭──╮\n╰──╯\n' > "$fixture"
+  out=$( LC_ALL=C FM_COMPOSER_FIXTURE="$fixture" bash -c '
+    . "$0/bin/backends/herdr.sh"
+    fm_backend_herdr_capture_ansi() { cat "$FM_COMPOSER_FIXTURE"; }
+    fm_backend_herdr_composer_state default:w1:p2
+  ' "$ROOT" )
+  [ "$out" = unknown ] || fail "box-border rows should not match the bare-prompt regex in the C locale, got '$out'"
+  pass "fm_backend_herdr_composer_state: bare-prompt matching is byte-safe in the C locale"
 }
 
 test_composer_state_claude_unbordered_prompt_is_pending() {
@@ -2021,6 +2044,7 @@ test_composer_state_popup_placeholder_fill_is_pending
 test_composer_state_unknown_on_capture_failure
 test_composer_state_unknown_when_no_composer_row_found
 test_composer_state_claude_unbordered_prompt_is_empty
+test_composer_state_bare_prompt_regex_is_c_locale_safe
 test_composer_state_claude_unbordered_prompt_is_pending
 test_composer_state_bare_prompt_below_stale_bordered_banner_wins
 test_composer_state_claude_dim_prompt_suggestion_ghost_is_empty

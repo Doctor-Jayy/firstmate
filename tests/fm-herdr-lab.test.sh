@@ -71,8 +71,8 @@ esac
 SH
 chmod +x "$FAKEBIN/herdr"
 
-# shellcheck source=bin/fm-herdr-lab.sh
-. "$ROOT/bin/fm-herdr-lab.sh"
+# shellcheck source=tests/herdr-test-safety.sh
+. "$ROOT/tests/herdr-test-safety.sh"
 
 run_with_fake() {
   PATH="$FAKEBIN:$PATH" \
@@ -231,6 +231,27 @@ SH
   pass "fm-herdr-lab: timed-out provisioning cancels the launch before teardown"
 }
 
+test_prompt_readiness_recognizes_trimmed_shell_and_agent_prompts() {
+  local prompt result
+  for prompt in '$ ' '❯ ' 'user@host % '; do
+    result=$(FM_FAKE_PROMPT="$prompt" bash -c '
+      . "$0/tests/herdr-test-safety.sh"
+      fm_herdr_lab_cli() { printf "startup banner\n%s\n" "$FM_FAKE_PROMPT"; }
+      sleep() { :; }
+      herdr_wait_for_pane_prompt session pane
+    ' "$ROOT" && printf accepted || printf rejected)
+    [ "$result" = accepted ] || fail "prompt readiness rejected '$prompt'"
+  done
+  result=$(bash -c '
+    . "$0/tests/herdr-test-safety.sh"
+    fm_herdr_lab_cli() { printf "startup banner\n╰──────── Composer ─────╯\n"; }
+    sleep() { :; }
+    herdr_wait_for_pane_prompt session pane
+  ' "$ROOT" && printf accepted || printf rejected)
+  [ "$result" = rejected ] || fail "prompt readiness accepted a box-border row"
+  pass "Herdr readiness trims and recognizes shell and agent prompt forms"
+}
+
 test_refuses_unsafe_names
 test_provision_run_and_guarded_teardown
 test_missing_tripwire_blocks_destruction
@@ -238,3 +259,4 @@ test_changed_default_trips_after_teardown
 test_stopped_owned_lab_can_reprovision
 test_failed_delete_retains_tripwire
 test_timed_out_provision_cancels_late_launch
+test_prompt_readiness_recognizes_trimmed_shell_and_agent_prompts

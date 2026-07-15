@@ -295,6 +295,14 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
   esac
 }
 
+advance_stale_hash() {  # <key> <hash>
+  local key=$1 h=$2 stalef surfacedf
+  stalef="$STATE/.stale-$key"
+  surfacedf="$STATE/.stale-surfaced-$key"
+  [ "$(cat "$stalef" 2>/dev/null || true)" = "$h" ] || rm -f "$surfacedf"
+  printf '%s' "$h" > "$stalef"
+}
+
 # Absorb a stale pane whose crew is in a DECLARED external-wait pause (paused:),
 # and re-surface it once every PAUSE_RESURFACE_SECS for a recheck so it cannot rot
 # invisibly. Called on any stale poll once the crew is known paused (first sight,
@@ -306,9 +314,12 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
 # re-surface epoch so, once past the window, it fires once per window rather than
 # every poll. Advances the stale suppressor to <hash> and flags the key paused.
 handle_paused_stale() {  # <window> <task> <hash>
-  local win=$1 task=$2 h=$3 key statusf mtime age rf rf_age reason
+  local win=$1 task=$2 h=$3 key statusf mtime age rf rf_age reason surfacedf recheckf
   key=$(printf '%s' "$win" | tr ':/.' '___')
-  printf '%s' "$h" > "$STATE/.stale-$key"
+  surfacedf="$STATE/.stale-surfaced-$key"
+  advance_stale_hash "$key" "$h"
+  recheckf="$STATE/.paused-rechecked-$key"
+  [ "$(cat "$recheckf" 2>/dev/null || true)" = paused ] || printf paused > "$recheckf"
   : > "$STATE/.paused-$key"
   rm -f "$STATE/.stale-since-$key" "$STATE/.wedge-escalations-$key"
   statusf="$STATE/$task.status"
@@ -320,6 +331,7 @@ handle_paused_stale() {  # <window> <task> <hash>
   if [ "$age" -ge "$PAUSE_RESURFACE_SECS" ] && [ "$rf_age" -ge "$PAUSE_RESURFACE_SECS" ]; then
     reason="stale: $win (paused ${age}s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds)"
     fm_wake_append stale "$win" "$reason" || exit 1
+    printf '%s' "$h" > "$surfacedf"
     date +%s > "$rf"
     wake "$reason"
   fi
@@ -340,7 +352,7 @@ clear_pause_tracking() {  # <window>
   key=${key//\//_}
   key=${key//./_}
   clear_pause_state "$win"
-  rm -f "$STATE/.stale-$key" "$STATE/.stale-since-$key" "$STATE/.wedge-escalations-$key"
+  rm -f "$STATE/.stale-$key" "$STATE/.stale-surfaced-$key" "$STATE/.stale-since-$key" "$STATE/.wedge-escalations-$key"
 }
 
 pause_state_class() {  # <window> <task>
@@ -355,24 +367,27 @@ pause_state_class() {  # <window> <task>
     crew_absorb_class "$task"
     return
   fi
-  if [ -e "$STATE/.paused-$key" ] && [ "$(age_of "$recheck_file")" -lt "$STALE_ESCALATE_SECS" ]; then
-    printf 'paused'
-    return
+  if [ "$(age_of "$recheck_file")" -lt "$STALE_ESCALATE_SECS" ]; then
+    class=$(cat "$recheck_file" 2>/dev/null || true)
+    case "$class" in
+      paused|working|none) printf '%s' "$class"; return ;;
+    esac
   fi
   class=$(crew_absorb_class "$task")
-  case "$class" in
-    paused) date +%s > "$recheck_file" ;;
-    *) rm -f "$recheck_file" ;;
-  esac
+  printf '%s' "$class" > "$recheck_file"
   printf '%s' "$class"
 }
 
 surface_nonterminal_stale() {  # <window> <hash>
-  local win=$1 h=$2 key
+  local win=$1 h=$2 key surfacedf
   key=$(printf '%s' "$win" | tr ':/.' '___')
+  surfacedf="$STATE/.stale-surfaced-$key"
+  [ "$(cat "$STATE/.stale-$key" 2>/dev/null || true)" = "$h" ] \
+    && [ "$(cat "$surfacedf" 2>/dev/null || true)" = "$h" ] && return
   fm_wake_append stale "$win" "stale: $win" || exit 1
-  printf '%s' "$h" > "$STATE/.stale-$key"
-  rm -f "$STATE/.stale-since-$key" "$STATE/.paused-$key" "$STATE/.paused-rechecked-$key" "$STATE/.paused-resurfaced-$key"
+  advance_stale_hash "$key" "$h"
+  printf '%s' "$h" > "$surfacedf"
+  rm -f "$STATE/.stale-since-$key" "$STATE/.paused-$key" "$STATE/.paused-resurfaced-$key"
   wake "stale: $win"
 }
 
@@ -750,7 +765,7 @@ EOF
           # Daemon owns triage: one-shot per distinct stale hash, as before.
           if [ "$(cat "$sf" 2>/dev/null || true)" != "$h" ]; then
             fm_wake_append stale "$w" "stale: $w" || exit 1
-            printf '%s' "$h" > "$sf"
+            advance_stale_hash "$key" "$h"
             wake "stale: $w"
           fi
         elif stale_is_terminal "$w" "$STATE"; then
@@ -770,12 +785,12 @@ EOF
           # over the log) a chance to override before trusting the log.
           if [ "$(cat "$sf" 2>/dev/null || true)" != "$h" ]; then
             if crew_is_provably_working "$(window_to_task "$w" "$STATE")"; then
-              printf '%s' "$h" > "$sf"
+              advance_stale_hash "$key" "$h"
               date +%s > "$ssf"
               triage_log "absorbed stale (provably working, overriding a stale captain-relevant status): $w"
             else
               fm_wake_append stale "$w" "stale: $w" || exit 1
-              printf '%s' "$h" > "$sf"
+              advance_stale_hash "$key" "$h"
               rm -f "$ssf"
               mark_surfaced "$STATE/$(window_to_task "$w" "$STATE").status"
               wake "stale: $w"
@@ -810,7 +825,7 @@ EOF
             case "$(crew_absorb_class "$task")" in
               working)
                 clear_pause_tracking "$w"
-                printf '%s' "$h" > "$sf"
+                advance_stale_hash "$key" "$h"
                 date +%s > "$ssf"
                 triage_log "absorbed non-terminal stale (provably working): $w"
                 ;;
@@ -826,8 +841,8 @@ EOF
             if [ -e "$pf" ] || status_is_paused "$(last_status_line "$STATE/$task.status")"; then
               case "$(pause_state_class "$w" "$task")" in
                 paused)  handle_paused_stale "$w" "$task" "$h" ;;
-                working) clear_pause_state "$w"
-                         printf '%s' "$h" > "$sf"
+                working) rm -f "$pf" "$STATE/.paused-resurfaced-$key"
+                         advance_stale_hash "$key" "$h"
                          wedge_timer_check "$w" "$ssf" "non-terminal stale (provably working after a declared pause)" "$ewf"
                          triage_log "absorbed non-terminal stale (provably working): $w" ;;
                 *)       surface_nonterminal_stale "$w" "$h" ;;

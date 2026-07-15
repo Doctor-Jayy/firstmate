@@ -13,6 +13,8 @@ Usage: fm-watch-checkpoint.sh [--seconds <n>]
 Run bin/fm-watch.sh in the foreground for a bounded checkpoint.
 On an actionable watcher wake, pass through the watcher output and exit 0.
 On a quiet checkpoint, print "checkpoint: no actionable wake within <n>s" and exit 124.
+Before returning 124, wait for the timed-out watcher to release its singleton lock.
+If the lock remains live, report the cleanup failure and exit 1 instead.
 EOF
 }
 
@@ -73,6 +75,36 @@ run_with_perl_timeout() {
   ' "$SECONDS_ARG" "$SCRIPT_DIR/fm-watch.sh"
 }
 
+cleanup_timed_out_watcher_lock() {
+  local home state lock owner current attempt=0
+  home=${FM_HOME:-${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}}
+  state=${FM_STATE_OVERRIDE:-$home/state}
+  lock="$state/.watch.lock"
+  owner=$(cat "$lock/pid" 2>/dev/null || true)
+  while [ "$attempt" -lt 20 ]; do
+    if [ ! -e "$lock" ] && [ ! -L "$lock" ]; then
+      return 0
+    fi
+    current=$(cat "$lock/pid" 2>/dev/null || true)
+    if [ -n "$owner" ] && [ "$current" != "$owner" ]; then
+      return 0
+    fi
+    if FM_STATE_OVERRIDE="$state" bash -c '
+      . "$1"
+      fm_lock_try_acquire "$2" || exit 1
+      fm_lock_release "$2"
+    ' _ "$SCRIPT_DIR/fm-wake-lib.sh" "$lock" >/dev/null 2>&1; then
+      if [ ! -e "$lock" ] && [ ! -L "$lock" ]; then
+        return 0
+      fi
+    fi
+    sleep 0.05
+    attempt=$((attempt + 1))
+  done
+  current=$(cat "$lock/pid" 2>/dev/null || true)
+  [ ! -e "$lock" ] && [ ! -L "$lock" ] || { [ -n "$owner" ] && [ "$current" != "$owner" ]; }
+}
+
 set +e
 if command -v timeout >/dev/null 2>&1; then
   timeout "$SECONDS_ARG" "$SCRIPT_DIR/fm-watch.sh" >"$OUT" 2>"$ERR"
@@ -100,6 +132,10 @@ if grep -E '^watcher: already running' "$OUT" "$ERR" >/dev/null 2>&1; then
 fi
 
 if [ "$RC" -eq 124 ]; then
+  if ! cleanup_timed_out_watcher_lock; then
+    echo "checkpoint: timed-out watcher still owns the watcher lock" >&2
+    exit 1
+  fi
   printf 'checkpoint: no actionable wake within %ss\n' "$SECONDS_ARG"
   exit 124
 fi

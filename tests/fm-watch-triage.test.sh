@@ -612,6 +612,117 @@ test_nonterminal_stale_paused_absorbed_then_resurfaced() {
   pass "a declared pause is absorbed on first sight, then re-surfaced as a recheck past the threshold, never wedge-escalated"
 }
 
+# A completed checks-green run-step outranks a declared pause in crew state, so
+# the pause is not absorbable. The first stale sight must still surface, but the
+# same unchanged pane hash must not surface again on every restarted watcher poll.
+test_nonterminal_stale_paused_done_run_surfaces_once_per_hash() {
+  local dir state fakebin out capture_file window key pane_hash pane_hash_b sig pid wakes state_reads back
+  dir=$(make_case nonterminal-stale-paused-done-run); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"; window="test:fm-paused-done"
+  state_reads="$dir/crew-state-reads"
+  printf 'idle after checks green\n' > "$capture_file"
+  printf 'window=%s\nkind=ship\n' "$window" > "$state/paused-done.meta"
+  printf 'paused: awaiting the upstream release\n' > "$state/paused-done.status"
+  sig=$(seen_sig "$state/paused-done.status"); printf '%s' "$sig" > "$state/.seen-paused-done_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text "idle after checks green")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  export FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file"
+  export FM_FAKE_CREW_STATE_LOG="$state_reads"
+  export FM_FAKE_CREW_STATE='state: paused · source: status-log · awaiting the upstream release'
+  export FM_PAUSE_RESURFACE_SECS=999
+  export FM_STALE_ESCALATE_SECS=999
+
+  watch_bg "$state" "$fakebin" "$out"
+  pid=$!
+  if ! wait_live "$pid" 30; then
+    reap "$pid"; fail "the initial declared pause was not absorbed: $(cat "$out")"
+  fi
+  [ ! -s "$state/.wake-queue" ] || { reap "$pid"; fail "the initial declared pause queued a wake instead of being absorbed"; }
+  [ "$(cat "$state/.stale-$key" 2>/dev/null || true)" = "$pane_hash" ] || { reap "$pid"; fail "the absorbed pause did not record its stale hash"; }
+  [ ! -e "$state/.stale-surfaced-$key" ] || { reap "$pid"; fail "the absorbed pause was recorded as captain-facing"; }
+  [ "$(wc -l < "$state_reads" | tr -d ' ')" = 1 ] || { reap "$pid"; fail "the absorbed pause was authoritatively classified more than once inside the bounded cadence"; }
+  reap "$pid"
+
+  export FM_FAKE_CREW_STATE='state: done · source: run-step · checks green'
+  unset FM_PAUSE_RESURFACE_SECS
+  back=$(( $(date +%s) - 2000 ))
+  if [ "$(uname)" = Darwin ]; then touch -mt "$(date -r "$back" '+%Y%m%d%H%M.%S')" "$state/.paused-rechecked-$key"
+  else touch -m -d "@$back" "$state/.paused-rechecked-$key"; fi
+  : > "$out"
+  watch_bg "$state" "$fakebin" "$out"
+  pid=$!
+  wait_for_exit "$pid" 40 || fail "the absorbed pause did not surface after the run became checks-green"
+  grep -Fx "stale: $window" "$out" >/dev/null || fail "the checks-green transition did not preserve the stale wake's plain identity"
+  [ "$(cat "$state/.stale-surfaced-$key" 2>/dev/null || true)" = "$pane_hash" ] || fail "the checks-green wake did not record surfaced provenance"
+  [ "$(wc -l < "$state_reads" | tr -d ' ')" = 2 ] || fail "the eligible checks-green transition did not perform exactly one authoritative recheck"
+
+  : > "$out"
+  watch_bg "$state" "$fakebin" "$out"
+  pid=$!
+  if ! wait_live "$pid" 30; then
+    reap "$pid"; fail "the unchanged paused pane resurfaced on the next poll: $(cat "$out")"
+  fi
+  wakes=$(wc -l < "$state/.wake-queue" | tr -d ' ')
+  [ "$wakes" = 1 ] || { reap "$pid"; fail "the unchanged paused pane queued $wakes stale wakes instead of one"; }
+  [ "$(wc -l < "$state_reads" | tr -d ' ')" = 2 ] || { reap "$pid"; fail "the surfaced unchanged pause bypassed the bounded authoritative-state cadence"; }
+  reap "$pid"
+
+  export FM_FAKE_CREW_STATE='state: paused · source: status-log · awaiting the upstream release'
+  rm -f "$state/.paused-rechecked-$key"
+  printf 'idle after checks green, pane B\n' > "$capture_file"
+  pane_hash_b=$(hash_text "idle after checks green, pane B")
+  : > "$out"
+  watch_bg "$state" "$fakebin" "$out"
+  pid=$!
+  if ! wait_live "$pid" 30; then
+    reap "$pid"; fail "the intervening paused pane hash unexpectedly surfaced: $(cat "$out")"
+  fi
+  [ "$(cat "$state/.stale-$key" 2>/dev/null || true)" = "$pane_hash_b" ] || { reap "$pid"; fail "the intervening paused pane hash was not recorded"; }
+  [ ! -e "$state/.stale-surfaced-$key" ] || { reap "$pid"; fail "the intervening pane retained stale surfaced provenance"; }
+  [ "$(wc -l < "$state_reads" | tr -d ' ')" = 3 ] || { reap "$pid"; fail "the intervening paused pane bypassed bounded authoritative classification"; }
+  reap "$pid"
+
+  printf 'idle after checks green\n' > "$capture_file"
+  : > "$out"
+  watch_bg "$state" "$fakebin" "$out"
+  pid=$!
+  if ! wait_live "$pid" 30; then
+    reap "$pid"; fail "the recurring paused pane hash unexpectedly surfaced: $(cat "$out")"
+  fi
+  [ "$(cat "$state/.stale-$key" 2>/dev/null || true)" = "$pane_hash" ] || { reap "$pid"; fail "the recurring paused pane hash was not recorded"; }
+  [ ! -e "$state/.stale-surfaced-$key" ] || { reap "$pid"; fail "the recurring pane reused surfaced provenance from its earlier episode"; }
+  [ "$(wc -l < "$state_reads" | tr -d ' ')" = 3 ] || { reap "$pid"; fail "the recurring paused pane bypassed the bounded authoritative-state cadence"; }
+  reap "$pid"
+
+  export FM_FAKE_CREW_STATE='state: done · source: run-step · checks green'
+  back=$(( $(date +%s) - 2000 ))
+  if [ "$(uname)" = Darwin ]; then touch -mt "$(date -r "$back" '+%Y%m%d%H%M.%S')" "$state/.paused-rechecked-$key"
+  else touch -m -d "@$back" "$state/.paused-rechecked-$key"; fi
+  : > "$out"
+  watch_bg "$state" "$fakebin" "$out"
+  pid=$!
+  wait_for_exit "$pid" 40 || fail "the recurring pane episode did not surface after becoming checks-green"
+  grep -Fx "stale: $window" "$out" >/dev/null || fail "the recurring pane episode did not preserve the stale wake's plain identity"
+  wakes=$(wc -l < "$state/.wake-queue" | tr -d ' ')
+  [ "$wakes" = 2 ] || fail "the recurring pane episode queued $wakes stale wakes instead of two total episode wakes"
+  [ "$(wc -l < "$state_reads" | tr -d ' ')" = 4 ] || fail "the recurring checks-green episode did not perform exactly one authoritative recheck"
+
+  : > "$out"
+  watch_bg "$state" "$fakebin" "$out"
+  pid=$!
+  if ! wait_live "$pid" 30; then
+    reap "$pid"; fail "the recurring pane episode repeated its captain-facing wake: $(cat "$out")"
+  fi
+  wakes=$(wc -l < "$state/.wake-queue" | tr -d ' ')
+  [ "$wakes" = 2 ] || { reap "$pid"; fail "the recurring unchanged pane queued $wakes stale wakes instead of two"; }
+  [ "$(wc -l < "$state_reads" | tr -d ' ')" = 4 ] || { reap "$pid"; fail "the recurring surfaced pane bypassed the bounded authoritative-state cadence"; }
+  reap "$pid"
+  unset FM_FAKE_CREW_STATE FM_FAKE_CREW_STATE_LOG FM_FAKE_TMUX_WINDOW FM_FAKE_TMUX_CAPTURE FM_STALE_ESCALATE_SECS
+  pass "declared pauses surface once per stale episode, including a recurring hash, with bounded authoritative rechecks"
+}
+
 test_secondmate_paused_resurfaces_in_normal_mode() {
   local dir state fakebin out capture_file statusf window key pane_hash sig pid back
   dir=$(make_case secondmate-paused-resurface); state="$dir/state"; fakebin="$dir/fakebin"
@@ -1118,6 +1229,66 @@ test_afk_paused_changed_pane_hands_off_plain_stale() {
   pass "AFK changed paused panes hand off plain stale identities for daemon-owned pause triage"
 }
 
+test_afk_hash_cycle_invalidates_normal_surface_provenance() {
+  local dir state fakebin out capture_file statusf window key sig pid pane_hash_a wakes
+  dir=$(make_case afk-hash-cycle); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"; window="test:fm-afk-cycle"
+  printf 'window=%s\nkind=ship\n' "$window" > "$state/afk-cycle.meta"
+  statusf="$state/afk-cycle.status"
+  printf 'paused: awaiting the upstream release\n' > "$statusf"
+  sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-afk-cycle_status"
+  key=$(printf '%s' "$window" | tr '.:/' '___')
+  printf 'idle pane A\n' > "$capture_file"
+  pane_hash_a=$(hash_text "idle pane A")
+  printf '%s' "$pane_hash_a" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  export FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file"
+  export FM_FAKE_CREW_STATE='state: done · source: run-step · checks green'
+
+  watch_bg "$state" "$fakebin" "$out"
+  pid=$!
+  wait_for_exit "$pid" 40 || fail "normal mode did not surface the initial A episode"
+  [ "$(cat "$state/.stale-surfaced-$key" 2>/dev/null || true)" = "$pane_hash_a" ] \
+    || fail "normal mode did not record surfaced provenance for A"
+
+  date '+%s' > "$state/.afk"
+  printf 'idle pane B\n' > "$capture_file"
+  : > "$out"
+  watch_bg "$state" "$fakebin" "$out"
+  pid=$!
+  wait_for_exit "$pid" 50 || fail "AFK mode did not advance the stale episode to B"
+  [ ! -e "$state/.stale-surfaced-$key" ] || fail "AFK advance to B retained A's surfaced provenance"
+
+  printf 'idle pane A\n' > "$capture_file"
+  : > "$out"
+  watch_bg "$state" "$fakebin" "$out"
+  pid=$!
+  wait_for_exit "$pid" 50 || fail "AFK mode did not advance the stale episode back to A"
+  [ ! -e "$state/.stale-surfaced-$key" ] || fail "AFK return to A restored stale surfaced provenance"
+
+  rm -f "$state/.afk"
+  : > "$out"
+  watch_bg "$state" "$fakebin" "$out"
+  pid=$!
+  wait_for_exit "$pid" 40 || fail "normal mode suppressed the recurring A episode after the AFK cycle"
+  [ "$(cat "$state/.stale-surfaced-$key" 2>/dev/null || true)" = "$pane_hash_a" ] \
+    || fail "normal mode did not record the recurring A episode as surfaced"
+  wakes=$(wc -l < "$state/.wake-queue" | tr -d ' ')
+  [ "$wakes" = 4 ] || fail "the initial, AFK, and recurring episodes queued $wakes wakes instead of four"
+
+  : > "$out"
+  watch_bg "$state" "$fakebin" "$out"
+  pid=$!
+  if ! wait_live "$pid" 30; then
+    reap "$pid"; fail "normal mode repeated the recurring A wake: $(cat "$out")"
+  fi
+  wakes=$(wc -l < "$state/.wake-queue" | tr -d ' ')
+  [ "$wakes" = 4 ] || { reap "$pid"; fail "same-hash dedupe left $wakes wakes instead of four"; }
+  reap "$pid"
+  unset FM_FAKE_CREW_STATE FM_FAKE_TMUX_WINDOW FM_FAKE_TMUX_CAPTURE
+  pass "AFK A-B-A stale cycles invalidate normal-mode surfaced provenance without breaking same-hash dedupe"
+}
+
 test_signal_reason_is_actionable_classifier
 test_stale_is_terminal_classifier
 test_scan_captain_relevant_statuses_classifier
@@ -1138,6 +1309,7 @@ test_wedge_escalation_marks_demand_deep_inspection_after_threshold
 test_wedge_escalation_resets_when_pane_becomes_active
 test_nonterminal_stale_not_working_surfaced
 test_nonterminal_stale_paused_absorbed_then_resurfaced
+test_nonterminal_stale_paused_done_run_surfaces_once_per_hash
 test_secondmate_paused_resurfaces_in_normal_mode
 test_secondmate_nonpaused_stale_remains_suppressed
 test_secondmate_unpause_clears_pause_tracking
@@ -1151,3 +1323,4 @@ test_heartbeat_backstop_surfaces_unsurfaced_status
 test_beacon_stays_fresh_while_absorbing
 test_afk_present_reverts_watcher_to_one_shot
 test_afk_paused_changed_pane_hands_off_plain_stale
+test_afk_hash_cycle_invalidates_normal_surface_provenance
