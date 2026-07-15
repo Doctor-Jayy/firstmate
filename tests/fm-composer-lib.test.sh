@@ -105,6 +105,21 @@ test_idle_placeholder_is_empty() {
   pass "fm_composer_classify_content: a known idle placeholder reads empty, before and after glyph stripping"
 }
 
+test_utf8_prompt_prefixes_strip_under_c_locale() {
+  local glyph content out
+  for glyph in '❯' '›'; do
+    for content in "$glyph Type a message..." "${glyph}Type a message..."; do
+      out=$(LC_ALL=C LANG=C /bin/bash -c '
+        . "$0/bin/fm-composer-lib.sh"
+        fm_composer_classify_content 1 "$1" "^Type a message\.\.\.$"
+      ' "$ROOT" "$content")
+      [ "$out" = empty ] \
+        || fail "UTF-8 prompt prefix in '$content' under a C locale should strip literally, got '$out'"
+    done
+  done
+  pass "fm_composer_classify_content: UTF-8 prompt prefixes strip under macOS Bash 3.2 in a C locale"
+}
+
 test_idle_placeholder_case_mode_is_explicit() {
   local idle='^Type a message\.\.\.$' out
   out=$(classify 1 'type a message...' "$idle")
@@ -132,5 +147,6 @@ test_bordered_shell_glyph_is_empty
 test_agent_glyphs_are_empty_bordered_and_bare
 test_empty_content_is_empty
 test_idle_placeholder_is_empty
+test_utf8_prompt_prefixes_strip_under_c_locale
 test_idle_placeholder_case_mode_is_explicit
 test_real_text_is_pending

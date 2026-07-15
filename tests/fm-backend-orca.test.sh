@@ -197,6 +197,17 @@ test_composer_state_popup_placeholder_fill_is_pending() {
   pass "fm_backend_orca_composer_state: a slash-command popup's argument-hint placeholder still reads pending"
 }
 
+test_composer_state_utf8_prefixed_placeholder_is_empty_under_c_locale() {
+  local out
+  orca_case composer-c-locale-placeholder
+  printf '{"ok":true,"result":{"terminal":{"tail":["  ╭──╮","  │ ❯ Type a message... │","  ╰──╯"]}}}\n' > "$RESP/1.out"
+  out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" LC_ALL=C LANG=C \
+    /bin/bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_composer_state term-123' "$ROOT" )
+  [ "$out" = empty ] \
+    || fail "Orca UTF-8 prompt prefix under a C locale should leave an idle placeholder, got '$out'"
+  pass "fm_backend_orca_composer_state: UTF-8 prompt-prefix stripping is C-locale safe"
+}
+
 # Dead-shell injection safety (task fm-composer-shellglyph-safety): a pane whose
 # agent has exited to a bare login shell has no bordered composer row, so the
 # classifier finds nothing and reports `unknown` - NOT a safe (empty) injection
@@ -1281,6 +1292,7 @@ test_send_text_submit_verifies_empty_composer_after_enter
 test_send_text_submit_keeps_current_tail_when_limited
 test_send_text_submit_retries_when_composer_stays_pending
 test_composer_state_popup_placeholder_fill_is_pending
+test_composer_state_utf8_prefixed_placeholder_is_empty_under_c_locale
 test_composer_state_bare_shell_prompt_is_unknown
 test_send_text_submit_popup_autocomplete_requires_second_enter
 test_send_literal_constructs_non_enter_send

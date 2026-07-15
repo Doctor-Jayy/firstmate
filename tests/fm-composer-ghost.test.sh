@@ -221,6 +221,20 @@ test_dark_truecolor_ghost_only_composer_is_not_pending() {
   pass "fm_pane_input_pending: a dark truecolor ghost-only composer (grok placeholder) is NOT pending"
 }
 
+test_idle_placeholder_after_utf8_prompt_is_empty_under_c_locale() {
+  local dir fb capture out
+  dir="$TMP_ROOT/c-locale-placeholder"; mkdir -p "$dir"
+  fb=$(make_fake_tmux "$dir")
+  capture="$dir/styled.txt"
+  printf '❯ Type a message...\n' > "$capture"
+  out=$(PATH="$fb:$PATH" FM_FAKE_STYLED="$capture" FM_FAKE_CY=0 \
+    FM_COMPOSER_IDLE_RE='^Type a message\.\.\.$' LC_ALL=C LANG=C \
+    /bin/bash -c '. "$0/bin/fm-tmux-lib.sh"; fm_tmux_composer_state fakepane' "$ROOT")
+  [ "$out" = empty ] \
+    || fail "tmux UTF-8 prompt prefix under a C locale should leave an idle placeholder, got '$out'"
+  pass "fm_tmux_composer_state: UTF-8 prompt-prefix stripping is C-locale safe"
+}
+
 test_dark_truecolor_bare_shell_prompt_is_unknown() {
   local dir fb capture out prompt
   dir="$TMP_ROOT/dark-shell-prompt"; mkdir -p "$dir"
@@ -285,6 +299,7 @@ test_dim_ghost_inside_bordered_composer_is_not_pending
 test_normal_text_still_pending
 test_colored_text_with_2_payload_still_pending
 test_dark_truecolor_ghost_only_composer_is_not_pending
+test_idle_placeholder_after_utf8_prompt_is_empty_under_c_locale
 test_dark_truecolor_bare_shell_prompt_is_unknown
 test_real_text_with_trailing_ghost_is_pending
 test_peek_output_is_escape_free
