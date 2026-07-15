@@ -13,6 +13,8 @@ Usage: fm-watch-checkpoint.sh [--seconds <n>]
 Run bin/fm-watch.sh in the foreground for a bounded checkpoint.
 On an actionable watcher wake, pass through the watcher output and exit 0.
 On a quiet checkpoint, print "checkpoint: no actionable wake within <n>s" and exit 124.
+Before returning 124, wait for the timed-out watcher to release its singleton lock.
+If the lock remains live, report the cleanup failure and exit 1 instead.
 EOF
 }
 
