@@ -862,7 +862,7 @@ test_composer_state_pi_separator_frame_draft_pending() {
 }
 
 test_composer_state_pi_separator_frame_ambiguous_shapes_unknown() {
-  local dir fixture sep short out
+  local dir fixture sep short middle out
   dir="$TMP_ROOT/composer-pi-frame-ambiguous"; mkdir -p "$dir"; fixture="$dir/pane.out"
   sep=$(pi_herdr_separator_53)
   short=${sep%'─'}
@@ -874,6 +874,18 @@ test_composer_state_pi_separator_frame_ambiguous_shapes_unknown() {
   printf '%s\n\n%s\n  pi footer\n' "$sep" "$short" > "$fixture"
   out=$(classify_pi_composer_fixture "$fixture")
   [ "$out" = unknown ] || fail "mismatched Pi-style separators must remain unknown, got '$out'"
+
+  for middle in '›' '│ │'; do
+    printf '%s\n%s\n%s\n  pi footer\n' "$sep" "$middle" "$short" > "$fixture"
+    out=$(classify_pi_composer_fixture "$fixture")
+    [ "$out" = unknown ] \
+      || fail "mismatched Pi-style separators with legacy-like middle '$middle' must remain unknown, got '$out'"
+  done
+
+  printf '%s\n›\n%s\n  pi footer\n' "$sep" "$short" > "$fixture"
+  out=$(classify_pi_composer_fixture "$fixture" "")
+  [ "$out" = unknown ] \
+    || fail "mismatched Pi-style separators with missing identity must remain unknown, got '$out'"
 
   printf '%s\n\nsecond middle row\n%s\n  pi footer\n' "$sep" "$sep" > "$fixture"
   out=$(classify_pi_composer_fixture "$fixture")
@@ -891,7 +903,7 @@ test_composer_state_pi_separator_frame_ambiguous_shapes_unknown() {
   out=$(classify_pi_composer_fixture "$fixture" "")
   [ "$out" = unknown ] || fail "a stale frame above a replacement shell must remain unknown, got '$out'"
 
-  pass "fm_backend_herdr_composer_state: lone, mismatched, multi-row, stale, non-Pi, and dead-shell separator shapes remain unknown"
+  pass "fm_backend_herdr_composer_state: malformed Pi geometry cannot fall back to legacy composer shapes"
 }
 
 test_composer_state_bare_prompt_is_empty() {

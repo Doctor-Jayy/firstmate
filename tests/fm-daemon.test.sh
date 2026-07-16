@@ -1635,6 +1635,25 @@ daemon_pi_separator_53() {
   printf '%s' "$out"
 }
 
+assert_inject_msg_herdr_pi_fixture_defers() {  # <fixture> <state> <label>
+  local fixture=$1 state=$2 label=$3
+  (
+    fm_backend_source herdr
+    fm_backend_target_exists() { return 0; }
+    fm_backend_busy_state() { printf 'idle'; }
+    fm_backend_capture() { printf 'synthetic idle pane\n'; }
+    # shellcheck disable=SC2329 # Invoked indirectly by the production classifier.
+    fm_backend_herdr_capture_ansi() { cat "$fixture"; }
+    # shellcheck disable=SC2329 # Invoked indirectly by the production classifier.
+    fm_backend_herdr_agent_identity() { printf 'pi'; }
+    fm_backend_send_text_submit() { fail "submit must not run while the real Pi classifier reports unsafe input"; }
+    if FM_SUPERVISOR_BACKEND=herdr FM_SUPERVISOR_TARGET="lab:w1:p2" \
+      inject_msg "synthetic decision" "$state"; then
+      fail "inject_msg should defer for $label"
+    fi
+  ) || fail "real Pi classifier inject_msg subshell failed for $label"
+}
+
 test_inject_msg_herdr_real_pi_empty_classifier_submits() {
   local dir state fixture submitted sep
   dir=$(make_supercase inject-herdr-pi-empty)
@@ -1674,23 +1693,25 @@ test_inject_msg_herdr_real_pi_draft_classifier_defers() {
   afk_enter "$state"
   for draft in 'SYNTHETIC_PENDING_TEXT' '>' '$' '%' '#' '❯' '›' 'Type a message...'; do
     printf 'synthetic output\n%s\n%s\n%s\n  pi footer\n  workspace footer\n' "$sep" "$draft" "$sep" > "$fixture"
-    (
-      fm_backend_source herdr
-      fm_backend_target_exists() { return 0; }
-      fm_backend_busy_state() { printf 'idle'; }
-      fm_backend_capture() { printf 'synthetic idle pane\n'; }
-      # shellcheck disable=SC2329 # Invoked indirectly by the production classifier.
-      fm_backend_herdr_capture_ansi() { cat "$fixture"; }
-      # shellcheck disable=SC2329 # Invoked indirectly by the production classifier.
-      fm_backend_herdr_agent_identity() { printf 'pi'; }
-      fm_backend_send_text_submit() { fail "submit must not run while the real Pi classifier reports a draft"; }
-      if FM_SUPERVISOR_BACKEND=herdr FM_SUPERVISOR_TARGET="lab:w1:p2" \
-        inject_msg "synthetic decision" "$state"; then
-        fail "inject_msg should defer when the real Herdr Pi classifier sees draft '$draft'"
-      fi
-    ) || fail "real Pi draft-classifier inject_msg subshell failed for '$draft'"
+    assert_inject_msg_herdr_pi_fixture_defers "$fixture" "$state" "Pi draft '$draft'"
   done
   pass "inject_msg: the real Herdr classifier refuses every nonempty Pi draft"
+}
+
+test_inject_msg_herdr_malformed_pi_frame_defers() {
+  local dir state fixture sep short middle
+  dir=$(make_supercase inject-herdr-pi-malformed)
+  state="$dir/state"
+  fixture="$dir/pi-pane.out"
+  sep=$(daemon_pi_separator_53)
+  short=${sep%'─'}
+  afk_enter "$state"
+  for middle in '›' '│ │'; do
+    printf 'synthetic output\n%s\n%s\n%s\n  pi footer\n' "$sep" "$middle" "$short" > "$fixture"
+    assert_inject_msg_herdr_pi_fixture_defers "$fixture" "$state" \
+      "malformed Pi frame with legacy-like middle '$middle'"
+  done
+  pass "inject_msg: malformed Pi frames cannot fall back to legacy empty composers"
 }
 
 # Safety-critical (task fm-composer-shellglyph-safety): the away-mode injector
@@ -1812,4 +1833,5 @@ test_inject_msg_herdr_pane_gone_defers
 test_inject_msg_herdr_submits_through_backend_dispatch
 test_inject_msg_herdr_real_pi_empty_classifier_submits
 test_inject_msg_herdr_real_pi_draft_classifier_defers
+test_inject_msg_herdr_malformed_pi_frame_defers
 test_inject_msg_defers_on_dead_shell_unknown
