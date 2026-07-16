@@ -766,7 +766,7 @@ FM_BACKEND_HERDR_BARE_PROMPT_RE=${FM_BACKEND_HERDR_BARE_PROMPT_RE:-'^(❯|›)'}
 
 fm_backend_herdr_composer_state() {  # <target> -> empty|pending|unknown
   local target=$1 cap line trimmed found=0 shape="" raw_match="" bordered=0 stripped
-  local line_no=0 pi_end_line=0 pi_identity pi_separator_seen=0
+  local line_no=0 pi_end_line=0 pi_last_separator_line=0 pi_identity
   local pi_tail_max=$FM_BACKEND_HERDR_PI_COMPOSER_TAIL_MAX
   local prev_raw="" prev_trimmed="" prev2_trimmed="" prev_valid=0 prev2_valid=0
   case "$pi_tail_max" in ''|*[!0-9]*) pi_tail_max=6 ;; esac
@@ -782,7 +782,7 @@ fm_backend_herdr_composer_state() {  # <target> -> empty|pending|unknown
     trimmed="${trimmed#"${trimmed%%[![:space:]]*}"}"
     trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
     if fm_backend_herdr_pi_separator_row "$trimmed"; then
-      pi_separator_seen=1
+      pi_last_separator_line=$line_no
     fi
     if [ -n "$trimmed" ]; then
       case "$trimmed" in
@@ -822,9 +822,11 @@ fm_backend_herdr_composer_state() {  # <target> -> empty|pending|unknown
     prev_valid=1
   done < <(printf '%s\n' "$cap")
   [ "$found" -eq 1 ] || { printf 'unknown'; return 0; }
-  if [ "$pi_separator_seen" -eq 1 ]; then
+  if [ "$pi_last_separator_line" -gt 0 ]; then
     pi_identity=$(fm_backend_herdr_agent_identity "$target")
     if [ "$shape" = pi-frame ]; then
+      [ "$pi_end_line" -eq "$pi_last_separator_line" ] \
+        || { printf 'unknown'; return 0; }
       [ $((line_no - pi_end_line)) -le "$pi_tail_max" ] \
         || { printf 'unknown'; return 0; }
       [ "$pi_identity" = pi ] || { printf 'unknown'; return 0; }

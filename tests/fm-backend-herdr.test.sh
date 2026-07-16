@@ -887,6 +887,11 @@ test_composer_state_pi_separator_frame_ambiguous_shapes_unknown() {
   [ "$out" = unknown ] \
     || fail "mismatched Pi-style separators with missing identity must remain unknown, got '$out'"
 
+  printf '%s\n\n%s\nSYNTHETIC_PENDING_TEXT\n%s\n' "$sep" "$sep" "$short" > "$fixture"
+  out=$(classify_pi_composer_fixture "$fixture")
+  [ "$out" = unknown ] \
+    || fail "a valid frame followed by a newer unmatched separator must remain unknown, got '$out'"
+
   printf '%s\n\nsecond middle row\n%s\n  pi footer\n' "$sep" "$sep" > "$fixture"
   out=$(classify_pi_composer_fixture "$fixture")
   [ "$out" = unknown ] || fail "a Pi-style frame with multiple middle rows must remain unknown, got '$out'"
@@ -903,7 +908,7 @@ test_composer_state_pi_separator_frame_ambiguous_shapes_unknown() {
   out=$(classify_pi_composer_fixture "$fixture" "")
   [ "$out" = unknown ] || fail "a stale frame above a replacement shell must remain unknown, got '$out'"
 
-  pass "fm_backend_herdr_composer_state: malformed Pi geometry cannot fall back to legacy composer shapes"
+  pass "fm_backend_herdr_composer_state: newer malformed Pi geometry invalidates earlier frame candidates"
 }
 
 test_composer_state_bare_prompt_is_empty() {

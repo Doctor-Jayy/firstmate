@@ -1711,7 +1711,10 @@ test_inject_msg_herdr_malformed_pi_frame_defers() {
     assert_inject_msg_herdr_pi_fixture_defers "$fixture" "$state" \
       "malformed Pi frame with legacy-like middle '$middle'"
   done
-  pass "inject_msg: malformed Pi frames cannot fall back to legacy empty composers"
+  printf 'synthetic output\n%s\n\n%s\nSYNTHETIC_PENDING_TEXT\n%s\n' "$sep" "$sep" "$short" > "$fixture"
+  assert_inject_msg_herdr_pi_fixture_defers "$fixture" "$state" \
+    "valid Pi frame followed by a newer unmatched separator"
+  pass "inject_msg: newer malformed Pi geometry invalidates earlier empty frames"
 }
 
 # Safety-critical (task fm-composer-shellglyph-safety): the away-mode injector

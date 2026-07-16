@@ -722,14 +722,14 @@ The Herdr adapter recognized only vertically bordered rows and the verified bare
 The max-defer path calls the same guarded injection path and therefore could alarm without bypassing the false-negative classification.
 
 **Fix.** `fm_backend_herdr_composer_state` now recognizes a bottom-anchored pair of equal U+2500 separator rows with exactly one intervening candidate row.
-Recognition is gated on Herdr reporting the live agent identity as exactly `pi`, and the closing separator must be within the bounded capture tail.
+Recognition is gated on Herdr reporting the live agent identity as exactly `pi`, and the selected closing separator must be both within the bounded capture tail and the bottom-most Pi-style separator evidence.
 For an exact live Pi identity, a lone separator, unequal pair, multiple intervening rows, or stale pair outside the tail remains `unknown` even when the candidate middle row resembles a legacy bare or bordered composer.
 A complete frame with a non-Pi or missing live identity also remains `unknown`.
 After the backend selects the middle row, the existing `fm_composer_strip_ghost` and `fm_composer_classify_content` functions remain the only owners of empty-versus-pending content classification, with Pi selecting the classifier's literal mode because its separator-framed row has no harness prompt glyph or idle placeholder.
 Submit confirmation remains on native Herdr agent state.
 
-**Deterministic regressions.** `tests/fm-backend-herdr.test.sh` pins the exact 53-glyph empty frame as `empty`, synthetic text, `Type a message...`, and each of `>`, `$`, `%`, `#`, `❯`, and `›` as `pending`, and every ambiguous shape above as `unknown`, including malformed frames whose middle row matches legacy bare or bordered recognition.
-`tests/fm-daemon.test.sh` routes `inject_msg` through the real Herdr classifier and proves one submit for the empty Pi frame, no submit for any nonempty Pi draft, and no legacy fallback submission for malformed Pi geometry.
+**Deterministic regressions.** `tests/fm-backend-herdr.test.sh` pins the exact 53-glyph empty frame as `empty`, synthetic text, `Type a message...`, and each of `>`, `$`, `%`, `#`, `❯`, and `›` as `pending`, and every ambiguous shape above as `unknown`, including malformed frames whose middle row matches legacy recognition and an earlier valid frame followed by a newer unmatched separator.
+`tests/fm-daemon.test.sh` routes `inject_msg` through the real Herdr classifier and proves one submit for the empty Pi frame, no submit for any nonempty Pi draft, and no submission from an earlier empty candidate superseded by malformed Pi geometry.
 
 **Isolated real Pi/Herdr regression.** The opt-in test provisions only a generated non-`default` session through `bin/fm-herdr-lab.sh`, routes every adapter call back through that helper, launches real Pi with a task-local synthetic capture hook, and aborts before any provider request.
 It verifies drafted refusal and then one confirmed injection after the real separator-framed composer is cleared:
