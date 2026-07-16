@@ -709,6 +709,50 @@ The luminance rule assumes a dark terminal theme (the fleet reality); the SGR-2 
 **Resolved: backend-independent wedge alarm.** The max-defer wedge alarm (`inject_wedge_alarm`, `bin/fm-supervise-daemon.sh`) formerly alarmed into the void because its only active signal was a tmux client status-line flash, skipped for herdr, leaving only the passive `state/.subsuper-inject-wedged` marker.
 It now also attempts a configurable active alert independent of the supervisor backend; [`wedge-alarm.md`](wedge-alarm.md) owns its channels and verification evidence.
 
+## Incident (2026-07-16): Pi's separator-framed composer wedged away-mode injection
+
+A pending privacy-containment decision remained buffered while the active primary was Pi on Herdr.
+Redacted operational evidence showed 1,483 consecutive `composer state=unknown` deferrals over almost six hours, with the first max-defer alarm at 305 seconds and the last at 21,209 seconds.
+The escalation buffer and wedge marker survived, so classification, durability, and bounded wedge detection held while delivery into the primary context did not.
+No escalation payload, transcript, credential, identifier, or process command line was inspected for this reconstruction.
+
+**Root cause.** Pi 0.80.7 on Herdr 0.7.3 renders its composer as one input row between two equal-width U+2500 horizontal separators.
+The Herdr adapter recognized only vertically bordered rows and the verified bare Claude/Codex prompt glyphs, so both Pi's blank input row and a real Pi draft fell through to `unknown`.
+`inject_msg` correctly accepts only affirmative `empty`, which prevented unsafe typing but also prevented the buffered decision from reaching a valid Pi primary.
+The max-defer path calls the same guarded injection path and therefore could alarm without bypassing the false-negative classification.
+
+**Fix.** `fm_backend_herdr_composer_state` now recognizes a bottom-anchored pair of equal U+2500 separator rows with exactly one intervening candidate row.
+Recognition is gated on Herdr reporting the live agent identity as exactly `pi`, and the closing separator must be within the bounded capture tail.
+A lone separator, unequal pair, multiple intervening rows, stale pair outside the tail, non-Pi identity, or missing live identity remains `unknown`.
+After the backend selects the middle row, the existing `fm_composer_strip_ghost` and `fm_composer_classify_content` functions remain the only owners of empty-versus-pending content classification.
+Submit confirmation remains on native Herdr agent state.
+
+**Deterministic regressions.** `tests/fm-backend-herdr.test.sh` pins the exact 53-glyph empty frame as `empty`, the same frame with synthetic text as `pending`, and every ambiguous shape above as `unknown`.
+`tests/fm-daemon.test.sh` routes `inject_msg` through the real Herdr classifier and proves one submit for the empty Pi frame and no submit for the drafted Pi frame.
+
+**Isolated real Pi/Herdr regression.** The opt-in test provisions only a generated non-`default` session through `bin/fm-herdr-lab.sh`, routes every adapter call back through that helper, launches real Pi with a task-local synthetic capture hook, and aborts before any provider request.
+It verifies drafted refusal and then one confirmed injection after the real separator-framed composer is cleared:
+
+```sh
+HERDR_LAB_HELPER="$PWD/bin/fm-herdr-lab.sh" \
+  FM_AFK_PI_HERDR_E2E=1 \
+  tests/fm-afk-inject-pi-herdr-e2e.test.sh
+```
+
+```text
+ok - real Pi/Herdr: a drafted separator-framed composer refuses away-mode injection
+ok - real Pi/Herdr: an empty separator-framed composer receives one confirmed away-mode injection
+```
+
+The helper teardown completed successfully and verified the default-session fleet-state tripwire.
+
+**Shutdown relationship.** The shutdown flush encountered the same composer-classification false negative, but the later terminal-close message did not share that root cause.
+Herdr may reap the daemon pane when its foreground process exits, so the subsequent exact close can return non-zero even though an exact probe confirms `pane_not_found`.
+That confirmed-absence branch is intentional idempotent cleanup and remains unchanged.
+
+The AFK skill now states the missing cross-product reliability guarantee: every supported primary-harness and supervisor-backend pair requires a verified safe empty verdict, drafted refusal, and end-to-end single-delivery regression.
+This contract stays in the AFK skill rather than being duplicated in `AGENTS.md`.
+
 ## Native `pane.agent_status_changed` push escalation (immediate blocked wake)
 
 Herdr exposes a native, push-based agent-state event stream, and firstmate folds it into the watcher so a crew entering `blocked` (waiting on the human at a permission/trust dialog, an interactive menu, or a wedged prompt) wakes its supervisor sub-second instead of after the ~240s stale-pane wedge timer.

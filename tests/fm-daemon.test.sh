@@ -1626,6 +1626,71 @@ test_inject_msg_herdr_submits_through_backend_dispatch() {
   pass "inject_msg: dispatches busy-guard/composer-guard/submit through the herdr backend and succeeds on a confirmed empty composer"
 }
 
+daemon_pi_separator_53() {
+  local out="" i=0
+  while [ "$i" -lt 53 ]; do
+    out="${out}─"
+    i=$((i + 1))
+  done
+  printf '%s' "$out"
+}
+
+test_inject_msg_herdr_real_pi_empty_classifier_submits() {
+  local dir state fixture submitted sep
+  dir=$(make_supercase inject-herdr-pi-empty)
+  state="$dir/state"
+  fixture="$dir/pi-pane.out"
+  submitted="$dir/submitted"
+  sep=$(daemon_pi_separator_53)
+  printf 'synthetic output\n%s\n\n%s\n  pi footer\n  workspace footer\n' "$sep" "$sep" > "$fixture"
+  afk_enter "$state"
+  (
+    fm_backend_source herdr
+    fm_backend_target_exists() { return 0; }
+    fm_backend_busy_state() { printf 'idle'; }
+    fm_backend_capture() { printf 'synthetic idle pane\n'; }
+    # shellcheck disable=SC2329 # Invoked indirectly by the production classifier.
+    fm_backend_herdr_capture_ansi() { cat "$fixture"; }
+    # shellcheck disable=SC2329 # Invoked indirectly by the production classifier.
+    fm_backend_herdr_agent_identity() { printf 'pi'; }
+    fm_backend_send_text_submit() {
+      printf '%s\n' "$3" > "$submitted"
+      printf 'empty'
+    }
+    FM_SUPERVISOR_BACKEND=herdr FM_SUPERVISOR_TARGET="lab:w1:p2" \
+      inject_msg "synthetic decision" "$state" \
+      || fail "inject_msg should submit through the real Herdr classifier for Pi's verified empty frame"
+  ) || fail "real Pi empty-classifier inject_msg subshell failed"
+  [ -s "$submitted" ] || fail "Pi empty-classifier inject_msg never called the submit primitive"
+  pass "inject_msg: the real Herdr classifier permits one submit for Pi's verified empty separator frame"
+}
+
+test_inject_msg_herdr_real_pi_draft_classifier_defers() {
+  local dir state fixture sep
+  dir=$(make_supercase inject-herdr-pi-draft)
+  state="$dir/state"
+  fixture="$dir/pi-pane.out"
+  sep=$(daemon_pi_separator_53)
+  printf 'synthetic output\n%s\nSYNTHETIC_PENDING_TEXT\n%s\n  pi footer\n  workspace footer\n' "$sep" "$sep" > "$fixture"
+  afk_enter "$state"
+  (
+    fm_backend_source herdr
+    fm_backend_target_exists() { return 0; }
+    fm_backend_busy_state() { printf 'idle'; }
+    fm_backend_capture() { printf 'synthetic idle pane\n'; }
+    # shellcheck disable=SC2329 # Invoked indirectly by the production classifier.
+    fm_backend_herdr_capture_ansi() { cat "$fixture"; }
+    # shellcheck disable=SC2329 # Invoked indirectly by the production classifier.
+    fm_backend_herdr_agent_identity() { printf 'pi'; }
+    fm_backend_send_text_submit() { fail "submit must not run while the real Pi classifier reports a draft"; }
+    if FM_SUPERVISOR_BACKEND=herdr FM_SUPERVISOR_TARGET="lab:w1:p2" \
+      inject_msg "synthetic decision" "$state"; then
+      fail "inject_msg should defer when the real Herdr Pi classifier sees a synthetic draft"
+    fi
+  ) || fail "real Pi draft-classifier inject_msg subshell failed"
+  pass "inject_msg: the real Herdr classifier defers without submitting into Pi's drafted separator frame"
+}
+
 # Safety-critical (task fm-composer-shellglyph-safety): the away-mode injector
 # must NEVER type an escalation into a dead-shell pane. A bare shell prompt
 # classifies `unknown` (not `pending`), and inject_msg now defers on anything
@@ -1743,4 +1808,6 @@ test_inject_msg_herdr_busy_guard_defers
 test_inject_msg_herdr_composer_guard_defers
 test_inject_msg_herdr_pane_gone_defers
 test_inject_msg_herdr_submits_through_backend_dispatch
+test_inject_msg_herdr_real_pi_empty_classifier_submits
+test_inject_msg_herdr_real_pi_draft_classifier_defers
 test_inject_msg_defers_on_dead_shell_unknown
