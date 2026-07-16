@@ -43,8 +43,9 @@
 # tail scan, orca/cmux's plain read-screen). Once an adapter has a candidate
 # composer row it hands the RAW styled row to fm_composer_strip_ghost for the
 # real-typed-content extraction, strips the box borders, trims, and hands the
-# result plus a <bordered> flag to fm_composer_classify_content for the shared
-# empty|pending|unknown verdict. orca/cmux read a plain (unstyled) screen so
+# result plus a <bordered> flag and the row's prompt-glyph role to
+# fm_composer_classify_content for the shared empty|pending|unknown verdict.
+# orca/cmux read a plain (unstyled) screen so
 # they have no ghost styling to strip and rely on the idle-placeholder match
 # below. Re-sourcing is a cheap idempotent redefinition, so this file needs no
 # include guard (matching bin/fm-tmux-lib.sh).
@@ -161,15 +162,16 @@ fm_composer_strip_ghost() {
 
 # fm_composer_classify_content: the single shared composer-content verdict.
 #   <bordered> 1 when <content> came from a genuine agent-composer container (a
-#              bordered composer box, or a structurally-identified bare AGENT
-#              prompt row); 0 for a bare, unstructured row (e.g. tmux's raw
-#              cursor line that carried no box border).
+#              bordered box, a separator-framed row, or a structurally
+#              identified bare AGENT prompt row); 0 for a bare, unstructured row
+#              (e.g. tmux's raw cursor line that carried no box border).
 #   <content>  the candidate composer content, already border-stripped and
 #              whitespace-trimmed by the caller.
 #   [idle_re]  optional per-harness idle-placeholder regex (e.g. grok's
-#              "Type a message...") that reads as empty; matched both before and
-#              after a leading prompt glyph is stripped, so a pattern written
-#              with or without the glyph both land.
+#              "Type a message...") that reads as empty for prompt-bearing rows;
+#              matched both before and after a leading prompt glyph is stripped.
+#   [glyph_role] `prompt` when the harness owns recognized prompt glyphs on this
+#                row; `literal` when every nonempty glyph is drafted content.
 fm_composer_idle_matches() {
   local content=$1 idle_re=$2 idle_case=$3
   [ -n "$idle_re" ] || return 1
@@ -179,9 +181,19 @@ fm_composer_idle_matches() {
   esac
 }
 
-fm_composer_classify_content() {  # <bordered> <content> [idle_re] [idle_case] [plain_content]
-  local bordered=$1 content=$2 idle_re=${3:-} idle_case=${4:-sensitive} plain_content
+fm_composer_classify_content() {  # <bordered> <content> [idle_re] [idle_case] [plain_content] [glyph_role]
+  local bordered=$1 content=$2 idle_re=${3:-} idle_case=${4:-sensitive} plain_content glyph_role
   plain_content=${5:-$content}
+  glyph_role=${6:-prompt}
+  case "$glyph_role" in
+    literal)
+      [ -n "$content" ] || { printf 'empty'; return 0; }
+      printf 'pending'
+      return 0
+      ;;
+    prompt) ;;
+    *) printf 'unknown'; return 0 ;;
+  esac
   if [ "$bordered" != 1 ] && [ -z "$content" ] && [ -n "$plain_content" ]; then
     case "$plain_content" in
       '❯'|'›') printf 'empty'; return 0 ;;

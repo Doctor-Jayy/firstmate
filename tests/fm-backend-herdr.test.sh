@@ -812,6 +812,105 @@ test_busy_state_unknown_on_no_agent() {
 
 # --- composer_state: structural border-row classification --------------------
 
+# Pi 0.80.7 on Herdr 0.7.3 was measured in an isolated non-default lab session.
+# Its composer is exactly two 53-glyph U+2500 separator rows with one input row
+# between them, followed by two footer rows.
+pi_herdr_separator_53() {
+  local out="" i=0
+  while [ "$i" -lt 53 ]; do
+    out="${out}─"
+    i=$((i + 1))
+  done
+  printf '%s' "$out"
+}
+
+classify_pi_composer_fixture() {  # <fixture> [agent-identity] [tail-max]
+  local fixture=$1 identity=pi tail_max=6
+  [ "$#" -lt 2 ] || identity=$2
+  [ "$#" -lt 3 ] || tail_max=$3
+  FM_COMPOSER_FIXTURE="$fixture" FM_PI_AGENT_IDENTITY="$identity" \
+    FM_BACKEND_HERDR_PI_COMPOSER_TAIL_MAX="$tail_max" LC_ALL=C LANG=C \
+    /bin/bash -c '
+      . "$0/bin/backends/herdr.sh"
+      fm_backend_herdr_capture_ansi() { cat "$FM_COMPOSER_FIXTURE"; }
+      fm_backend_herdr_agent_identity() { printf "%s" "$FM_PI_AGENT_IDENTITY"; }
+      fm_backend_herdr_composer_state lab:w1:p2
+    ' "$ROOT"
+}
+
+test_composer_state_pi_separator_frame_empty() {
+  local dir fixture sep out
+  dir="$TMP_ROOT/composer-pi-frame-empty"; mkdir -p "$dir"; fixture="$dir/pane.out"
+  sep=$(pi_herdr_separator_53)
+  printf 'synthetic prior output\n%s\n\n%s\n  pi footer\n  workspace footer\n' "$sep" "$sep" > "$fixture"
+  out=$(classify_pi_composer_fixture "$fixture")
+  [ "$out" = empty ] || fail "a verified Pi separator-framed blank input row should read empty, got '$out'"
+  pass "fm_backend_herdr_composer_state: Pi's exact 53-glyph separator frame with a blank middle row reads empty"
+}
+
+test_composer_state_pi_separator_frame_draft_pending() {
+  local dir fixture sep draft out
+  dir="$TMP_ROOT/composer-pi-frame-draft"; mkdir -p "$dir"; fixture="$dir/pane.out"
+  sep=$(pi_herdr_separator_53)
+  for draft in 'SYNTHETIC_PENDING_TEXT' '>' '$' '%' '#' '❯' '›' 'Type a message...'; do
+    printf 'synthetic prior output\n%s\n%s\n%s\n  pi footer\n  workspace footer\n' "$sep" "$draft" "$sep" > "$fixture"
+    out=$(classify_pi_composer_fixture "$fixture")
+    [ "$out" = pending ] \
+      || fail "Pi draft '$draft' in a verified separator frame should read pending, got '$out'"
+  done
+  pass "fm_backend_herdr_composer_state: Pi's separator frame preserves every nonempty draft as pending"
+}
+
+test_composer_state_pi_separator_frame_ambiguous_shapes_unknown() {
+  local dir fixture sep short middle out
+  dir="$TMP_ROOT/composer-pi-frame-ambiguous"; mkdir -p "$dir"; fixture="$dir/pane.out"
+  sep=$(pi_herdr_separator_53)
+  short=${sep%'─'}
+
+  printf 'synthetic prior output\n%s\n\n' "$sep" > "$fixture"
+  out=$(classify_pi_composer_fixture "$fixture")
+  [ "$out" = unknown ] || fail "a lone Pi-style separator must remain unknown, got '$out'"
+
+  printf '%s\n\n%s\n  pi footer\n' "$sep" "$short" > "$fixture"
+  out=$(classify_pi_composer_fixture "$fixture")
+  [ "$out" = unknown ] || fail "mismatched Pi-style separators must remain unknown, got '$out'"
+
+  for middle in '›' '│ │'; do
+    printf '%s\n%s\n%s\n  pi footer\n' "$sep" "$middle" "$short" > "$fixture"
+    out=$(classify_pi_composer_fixture "$fixture")
+    [ "$out" = unknown ] \
+      || fail "mismatched Pi-style separators with legacy-like middle '$middle' must remain unknown, got '$out'"
+  done
+
+  printf '%s\n›\n%s\n  pi footer\n' "$sep" "$short" > "$fixture"
+  out=$(classify_pi_composer_fixture "$fixture" "")
+  [ "$out" = unknown ] \
+    || fail "mismatched Pi-style separators with missing identity must remain unknown, got '$out'"
+
+  printf '%s\n\n%s\nSYNTHETIC_PENDING_TEXT\n%s\n' "$sep" "$sep" "$short" > "$fixture"
+  out=$(classify_pi_composer_fixture "$fixture")
+  [ "$out" = unknown ] \
+    || fail "a valid frame followed by a newer unmatched separator must remain unknown, got '$out'"
+
+  printf '%s\n\nsecond middle row\n%s\n  pi footer\n' "$sep" "$sep" > "$fixture"
+  out=$(classify_pi_composer_fixture "$fixture")
+  [ "$out" = unknown ] || fail "a Pi-style frame with multiple middle rows must remain unknown, got '$out'"
+
+  printf '%s\n\n%s\n  footer\n' "$sep" "$sep" > "$fixture"
+  out=$(classify_pi_composer_fixture "$fixture" claude)
+  [ "$out" = unknown ] || fail "a separator frame without an exact live Pi identity must remain unknown, got '$out'"
+
+  printf '%s\n\n%s\n1\n2\n3\n4\n5\n6\n7\n' "$sep" "$sep" > "$fixture"
+  out=$(classify_pi_composer_fixture "$fixture")
+  [ "$out" = unknown ] || fail "a stale Pi-style frame outside the bounded tail must remain unknown, got '$out'"
+
+  printf '%s\n\n%s\n$ \n' "$sep" "$sep" > "$fixture"
+  out=$(classify_pi_composer_fixture "$fixture" "")
+  [ "$out" = unknown ] || fail "a stale frame above a replacement shell must remain unknown, got '$out'"
+
+  pass "fm_backend_herdr_composer_state: newer malformed Pi geometry invalidates earlier frame candidates"
+}
+
 test_composer_state_bare_prompt_is_empty() {
   local dir fixture out
   dir="$TMP_ROOT/composer-bare"; mkdir -p "$dir"; fixture="$dir/pane.out"
@@ -2037,6 +2136,9 @@ test_current_path_reads_cwd
 test_busy_state_working_maps_to_busy
 test_busy_state_done_and_blocked_map_to_idle
 test_busy_state_unknown_on_no_agent
+test_composer_state_pi_separator_frame_empty
+test_composer_state_pi_separator_frame_draft_pending
+test_composer_state_pi_separator_frame_ambiguous_shapes_unknown
 test_composer_state_bare_prompt_is_empty
 test_composer_state_ghost_placeholder_is_empty
 test_composer_state_real_text_is_pending

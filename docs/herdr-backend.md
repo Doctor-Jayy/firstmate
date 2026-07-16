@@ -483,9 +483,10 @@ Codex additionally shows dynamic tip/hint text in its idle composer rather than 
 The first fix deliberately left that as a conservative `pending` verdict at the composer-guard layer because plain text could not distinguish a ghost suggestion from real typed input.
 The 2026-07-08 follow-up below closes that gap using herdr's ANSI capture, which preserves Codex's faint styling for ghost suggestions.
 
-**Fix:** `fm_backend_herdr_composer_state` now recognizes TWO composer-row shapes in one scan - the existing bordered shape, and a new bare (unbordered) shape: a trimmed line that STARTS with a verified agent-specific prompt glyph (`❯` claude or `›` codex) with no closing border required at all.
+**Fix:** The 2026-07-07 change added a second composer-row shape to `fm_backend_herdr_composer_state` - a bare (unbordered) trimmed line that starts with a verified agent-specific prompt glyph (`❯` Claude or `›` Codex) with no closing border required.
 The bare-row default is deliberately limited to `❯` and `›`, while generic shell-style glyphs (`>`, `$`, `%`, `#`) stay recognized only after the bordered shape has already identified a composer row, so a no-agent shell fallback cannot be misread as a delivered escalation.
-Both shapes are checked in the SAME forward scan, keeping whichever match comes LAST (bottom-most on screen), rather than trying bordered-only first and falling back to bare-only when nothing bordered is found: a bordered decorative box (a welcome banner, an update notice) is always rendered ABOVE the live composer, never below it, in every harness observed, so "last match of either shape wins" always resolves to the genuinely live, bottom-most row instead of a stale decorative box still sitting in the capture window.
+Within the verified Claude/Codex layouts, the bordered and bare shapes share one forward scan and the last match wins, so a stale decorative box above the live composer cannot outrank it.
+The current third, Pi-specific separator-framed shape and its stricter ambiguity handling are documented in the 2026-07-16 incident below.
 See `fm_backend_herdr_composer_state` in `bin/backends/herdr.sh` for the implementation, and `tests/fm-backend-herdr.test.sh`'s "unbordered (bare) composer rows" section (fixtures captured verbatim from real `claude`/`codex` panes) for the regression coverage - each of those tests read `unknown` before this fix and reads the correct verdict after.
 
 ## Incident (2026-07-08): away-mode delivery wedged on Codex ghost suggestions
@@ -708,6 +709,50 @@ The luminance rule assumes a dark terminal theme (the fleet reality); the SGR-2 
 
 **Resolved: backend-independent wedge alarm.** The max-defer wedge alarm (`inject_wedge_alarm`, `bin/fm-supervise-daemon.sh`) formerly alarmed into the void because its only active signal was a tmux client status-line flash, skipped for herdr, leaving only the passive `state/.subsuper-inject-wedged` marker.
 It now also attempts a configurable active alert independent of the supervisor backend; [`wedge-alarm.md`](wedge-alarm.md) owns its channels and verification evidence.
+
+## Incident (2026-07-16): Pi's separator-framed composer wedged away-mode injection
+
+A pending privacy-containment decision remained buffered while the active primary was Pi on Herdr.
+Redacted operational evidence showed 1,483 consecutive `composer state=unknown` deferrals over almost six hours, with the first max-defer alarm at 305 seconds and the last at 21,209 seconds.
+The escalation buffer and wedge marker survived, so classification, durability, and bounded wedge detection held while delivery into the primary context did not.
+No escalation payload, transcript, credential, identifier, or process command line was inspected for this reconstruction.
+
+**Root cause.** Pi 0.80.7 on Herdr 0.7.3 renders its composer as one input row between two equal-width U+2500 horizontal separators.
+The Herdr adapter recognized only vertically bordered rows and the verified bare Claude/Codex prompt glyphs, so both Pi's blank input row and a real Pi draft fell through to `unknown`.
+`inject_msg` correctly accepts only affirmative `empty`, which prevented unsafe typing but also prevented the buffered decision from reaching a valid Pi primary.
+The max-defer path calls the same guarded injection path and therefore could alarm without bypassing the false-negative classification.
+
+**Fix.** `fm_backend_herdr_composer_state` now recognizes a bottom-anchored pair of equal U+2500 separator rows with exactly one intervening candidate row.
+Recognition is gated on Herdr reporting the live agent identity as exactly `pi`, and the selected closing separator must be both within the bounded capture tail and the bottom-most Pi-style separator evidence.
+For an exact live Pi identity, a lone separator, unequal pair, multiple intervening rows, or stale pair outside the tail remains `unknown` even when the candidate middle row resembles a legacy bare or bordered composer.
+A complete frame with a non-Pi or missing live identity also remains `unknown`.
+After the backend selects the middle row, the existing `fm_composer_strip_ghost` and `fm_composer_classify_content` functions remain the only owners of empty-versus-pending content classification, with Pi selecting the classifier's literal mode because its separator-framed row has no harness prompt glyph or idle placeholder.
+Submit confirmation remains on native Herdr agent state.
+
+**Deterministic regressions.** `tests/fm-backend-herdr.test.sh` pins the exact 53-glyph empty frame as `empty`, synthetic text, `Type a message...`, and each of `>`, `$`, `%`, `#`, `❯`, and `›` as `pending`, and every ambiguous shape above as `unknown`, including malformed frames whose middle row matches legacy recognition and an earlier valid frame followed by a newer unmatched separator.
+`tests/fm-daemon.test.sh` routes `inject_msg` through the real Herdr classifier and proves one submit for the empty Pi frame, no submit for any nonempty Pi draft, and no submission from an earlier empty candidate superseded by malformed Pi geometry.
+
+**Isolated real Pi/Herdr regression.** The opt-in test provisions only a generated non-`default` session through `bin/fm-herdr-lab.sh`, routes every adapter call back through that helper, launches real Pi with a task-local synthetic capture hook, and aborts before any provider request.
+It verifies drafted refusal and then one confirmed injection after the real separator-framed composer is cleared:
+
+```sh
+HERDR_LAB_HELPER="$PWD/bin/fm-herdr-lab.sh" \
+  FM_AFK_PI_HERDR_E2E=1 \
+  tests/fm-afk-inject-pi-herdr-e2e.test.sh
+```
+
+```text
+ok - real Pi/Herdr: a drafted separator-framed composer refuses away-mode injection
+ok - real Pi/Herdr: an empty separator-framed composer receives one confirmed away-mode injection
+```
+
+The helper teardown completed successfully and verified the default-session fleet-state tripwire.
+
+**Shutdown relationship.** The shutdown flush encountered the same composer-classification false negative, but the later terminal-close message did not share that root cause.
+Herdr may reap the daemon pane when its foreground process exits, so the subsequent exact close can return non-zero even though an exact probe confirms `pane_not_found`.
+That confirmed-absence branch is intentional idempotent cleanup and remains unchanged.
+
+The AFK skill's "Reliability properties" section owns the cross-product verification guarantee, and `AGENTS.md` does not duplicate it.
 
 ## Native `pane.agent_status_changed` push escalation (immediate blocked wake)
 

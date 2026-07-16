@@ -1066,10 +1066,10 @@ window_for_task() {  # <task-key> [state]
 #     path it means native agent-state observed a real turn start.
 #     Pending means Enter was swallowed; unknown is treated as undelivered by
 #     this strict daemon path.
-#   - COMPOSER GUARD before typing: if the cursor line already has real content
-#     after dim/faint ghost text and borders are ignored (a human's half-typed
-#     line, or a previous injection's unsent text), defer entirely - injecting
-#     would merge with the human's text.
+#   - COMPOSER GUARD before typing: if the backend-recognized composer candidate
+#     already has real content after ghost text and structural framing are
+#     ignored (a human's half-typed line, or a previous injection's unsent text),
+#     defer entirely - injecting would merge with the human's text.
 inject_msg() {  # <message> [state]
   local msg=$1 state target backend retries sleep_s verdict composer
   state="${2:-$(_state_root)}"

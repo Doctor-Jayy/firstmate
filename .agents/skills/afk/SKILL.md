@@ -226,6 +226,7 @@ These properties must hold:
 - Wedge detection is bounded-latency, not lossy.
 - Declared external waits are rechecked on a separate, bounded cadence rather than being mislabeled as wedges.
 - The catch-all scan backs up the keyword classifier.
+- Every supported primary-harness and supervisor-backend pair has a verified safe empty-composer verdict, a verified drafted-composer refusal, and an end-to-end single-delivery regression.
 - The daemon preserves a single-instance portable lock, crash-loop backoff,
   a pane-gone guard, and a signal-trapped shutdown that flushes buffered
   escalations before exit.

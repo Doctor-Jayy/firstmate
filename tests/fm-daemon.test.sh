@@ -1626,6 +1626,97 @@ test_inject_msg_herdr_submits_through_backend_dispatch() {
   pass "inject_msg: dispatches busy-guard/composer-guard/submit through the herdr backend and succeeds on a confirmed empty composer"
 }
 
+daemon_pi_separator_53() {
+  local out="" i=0
+  while [ "$i" -lt 53 ]; do
+    out="${out}─"
+    i=$((i + 1))
+  done
+  printf '%s' "$out"
+}
+
+assert_inject_msg_herdr_pi_fixture_defers() {  # <fixture> <state> <label>
+  local fixture=$1 state=$2 label=$3
+  (
+    fm_backend_source herdr
+    fm_backend_target_exists() { return 0; }
+    fm_backend_busy_state() { printf 'idle'; }
+    fm_backend_capture() { printf 'synthetic idle pane\n'; }
+    # shellcheck disable=SC2329 # Invoked indirectly by the production classifier.
+    fm_backend_herdr_capture_ansi() { cat "$fixture"; }
+    # shellcheck disable=SC2329 # Invoked indirectly by the production classifier.
+    fm_backend_herdr_agent_identity() { printf 'pi'; }
+    fm_backend_send_text_submit() { fail "submit must not run while the real Pi classifier reports unsafe input"; }
+    if FM_SUPERVISOR_BACKEND=herdr FM_SUPERVISOR_TARGET="lab:w1:p2" \
+      inject_msg "synthetic decision" "$state"; then
+      fail "inject_msg should defer for $label"
+    fi
+  ) || fail "real Pi classifier inject_msg subshell failed for $label"
+}
+
+test_inject_msg_herdr_real_pi_empty_classifier_submits() {
+  local dir state fixture submitted sep
+  dir=$(make_supercase inject-herdr-pi-empty)
+  state="$dir/state"
+  fixture="$dir/pi-pane.out"
+  submitted="$dir/submitted"
+  sep=$(daemon_pi_separator_53)
+  printf 'synthetic output\n%s\n\n%s\n  pi footer\n  workspace footer\n' "$sep" "$sep" > "$fixture"
+  afk_enter "$state"
+  (
+    fm_backend_source herdr
+    fm_backend_target_exists() { return 0; }
+    fm_backend_busy_state() { printf 'idle'; }
+    fm_backend_capture() { printf 'synthetic idle pane\n'; }
+    # shellcheck disable=SC2329 # Invoked indirectly by the production classifier.
+    fm_backend_herdr_capture_ansi() { cat "$fixture"; }
+    # shellcheck disable=SC2329 # Invoked indirectly by the production classifier.
+    fm_backend_herdr_agent_identity() { printf 'pi'; }
+    fm_backend_send_text_submit() {
+      printf '%s\n' "$3" > "$submitted"
+      printf 'empty'
+    }
+    FM_SUPERVISOR_BACKEND=herdr FM_SUPERVISOR_TARGET="lab:w1:p2" \
+      inject_msg "synthetic decision" "$state" \
+      || fail "inject_msg should submit through the real Herdr classifier for Pi's verified empty frame"
+  ) || fail "real Pi empty-classifier inject_msg subshell failed"
+  [ -s "$submitted" ] || fail "Pi empty-classifier inject_msg never called the submit primitive"
+  pass "inject_msg: the real Herdr classifier permits one submit for Pi's verified empty separator frame"
+}
+
+test_inject_msg_herdr_real_pi_draft_classifier_defers() {
+  local dir state fixture sep draft
+  dir=$(make_supercase inject-herdr-pi-draft)
+  state="$dir/state"
+  fixture="$dir/pi-pane.out"
+  sep=$(daemon_pi_separator_53)
+  afk_enter "$state"
+  for draft in 'SYNTHETIC_PENDING_TEXT' '>' '$' '%' '#' '❯' '›' 'Type a message...'; do
+    printf 'synthetic output\n%s\n%s\n%s\n  pi footer\n  workspace footer\n' "$sep" "$draft" "$sep" > "$fixture"
+    assert_inject_msg_herdr_pi_fixture_defers "$fixture" "$state" "Pi draft '$draft'"
+  done
+  pass "inject_msg: the real Herdr classifier refuses every nonempty Pi draft"
+}
+
+test_inject_msg_herdr_malformed_pi_frame_defers() {
+  local dir state fixture sep short middle
+  dir=$(make_supercase inject-herdr-pi-malformed)
+  state="$dir/state"
+  fixture="$dir/pi-pane.out"
+  sep=$(daemon_pi_separator_53)
+  short=${sep%'─'}
+  afk_enter "$state"
+  for middle in '›' '│ │'; do
+    printf 'synthetic output\n%s\n%s\n%s\n  pi footer\n' "$sep" "$middle" "$short" > "$fixture"
+    assert_inject_msg_herdr_pi_fixture_defers "$fixture" "$state" \
+      "malformed Pi frame with legacy-like middle '$middle'"
+  done
+  printf 'synthetic output\n%s\n\n%s\nSYNTHETIC_PENDING_TEXT\n%s\n' "$sep" "$sep" "$short" > "$fixture"
+  assert_inject_msg_herdr_pi_fixture_defers "$fixture" "$state" \
+    "valid Pi frame followed by a newer unmatched separator"
+  pass "inject_msg: newer malformed Pi geometry invalidates earlier empty frames"
+}
+
 # Safety-critical (task fm-composer-shellglyph-safety): the away-mode injector
 # must NEVER type an escalation into a dead-shell pane. A bare shell prompt
 # classifies `unknown` (not `pending`), and inject_msg now defers on anything
@@ -1743,4 +1834,7 @@ test_inject_msg_herdr_busy_guard_defers
 test_inject_msg_herdr_composer_guard_defers
 test_inject_msg_herdr_pane_gone_defers
 test_inject_msg_herdr_submits_through_backend_dispatch
+test_inject_msg_herdr_real_pi_empty_classifier_submits
+test_inject_msg_herdr_real_pi_draft_classifier_defers
+test_inject_msg_herdr_malformed_pi_frame_defers
 test_inject_msg_defers_on_dead_shell_unknown
