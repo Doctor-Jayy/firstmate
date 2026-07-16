@@ -852,13 +852,13 @@ test_composer_state_pi_separator_frame_draft_pending() {
   local dir fixture sep draft out
   dir="$TMP_ROOT/composer-pi-frame-draft"; mkdir -p "$dir"; fixture="$dir/pane.out"
   sep=$(pi_herdr_separator_53)
-  for draft in 'SYNTHETIC_PENDING_TEXT' '>' '$' '%' '#' '❯' '›'; do
+  for draft in 'SYNTHETIC_PENDING_TEXT' '>' '$' '%' '#' '❯' '›' 'Type a message...'; do
     printf 'synthetic prior output\n%s\n%s\n%s\n  pi footer\n  workspace footer\n' "$sep" "$draft" "$sep" > "$fixture"
     out=$(classify_pi_composer_fixture "$fixture")
     [ "$out" = pending ] \
       || fail "Pi draft '$draft' in a verified separator frame should read pending, got '$out'"
   done
-  pass "fm_backend_herdr_composer_state: Pi's separator frame preserves text and glyph-only drafts as pending"
+  pass "fm_backend_herdr_composer_state: Pi's separator frame preserves every nonempty draft as pending"
 }
 
 test_composer_state_pi_separator_frame_ambiguous_shapes_unknown() {

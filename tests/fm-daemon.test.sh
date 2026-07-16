@@ -1672,7 +1672,7 @@ test_inject_msg_herdr_real_pi_draft_classifier_defers() {
   fixture="$dir/pi-pane.out"
   sep=$(daemon_pi_separator_53)
   afk_enter "$state"
-  for draft in 'SYNTHETIC_PENDING_TEXT' '>' '$' '%' '#' '❯' '›'; do
+  for draft in 'SYNTHETIC_PENDING_TEXT' '>' '$' '%' '#' '❯' '›' 'Type a message...'; do
     printf 'synthetic output\n%s\n%s\n%s\n  pi footer\n  workspace footer\n' "$sep" "$draft" "$sep" > "$fixture"
     (
       fm_backend_source herdr
@@ -1690,7 +1690,7 @@ test_inject_msg_herdr_real_pi_draft_classifier_defers() {
       fi
     ) || fail "real Pi draft-classifier inject_msg subshell failed for '$draft'"
   done
-  pass "inject_msg: the real Herdr classifier refuses text and glyph-only Pi drafts"
+  pass "inject_msg: the real Herdr classifier refuses every nonempty Pi draft"
 }
 
 # Safety-critical (task fm-composer-shellglyph-safety): the away-mode injector

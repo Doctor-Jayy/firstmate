@@ -844,7 +844,7 @@ fm_backend_herdr_composer_state() {  # <target> -> empty|pending|unknown
     stripped="${stripped#"${stripped%%[![:space:]]*}"}"
     stripped="${stripped%"${stripped##*[![:space:]]}"}"
   elif [ "$shape" = pi-frame ]; then
-    fm_composer_classify_content 1 "$stripped" "$FM_BACKEND_HERDR_IDLE_RE" sensitive "$stripped" literal
+    fm_composer_classify_content 1 "$stripped" '' sensitive "$stripped" literal
     return 0
   fi
   # Delegate the empty/pending/unknown decision to the shared owner. The bare

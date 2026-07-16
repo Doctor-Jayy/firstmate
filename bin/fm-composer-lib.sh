@@ -168,9 +168,8 @@ fm_composer_strip_ghost() {
 #   <content>  the candidate composer content, already border-stripped and
 #              whitespace-trimmed by the caller.
 #   [idle_re]  optional per-harness idle-placeholder regex (e.g. grok's
-#              "Type a message...") that reads as empty; matched both before and
-#              after a leading prompt glyph is stripped, so a pattern written
-#              with or without the glyph both land.
+#              "Type a message...") that reads as empty for prompt-bearing rows;
+#              matched both before and after a leading prompt glyph is stripped.
 #   [glyph_role] `prompt` when the harness owns recognized prompt glyphs on this
 #                row; `literal` when every nonempty glyph is drafted content.
 fm_composer_idle_matches() {
@@ -189,11 +188,7 @@ fm_composer_classify_content() {  # <bordered> <content> [idle_re] [idle_case] [
   case "$glyph_role" in
     literal)
       [ -n "$content" ] || { printf 'empty'; return 0; }
-      if fm_composer_idle_matches "$content" "$idle_re" "$idle_case"; then
-        printf 'empty'
-      else
-        printf 'pending'
-      fi
+      printf 'pending'
       return 0
       ;;
     prompt) ;;
