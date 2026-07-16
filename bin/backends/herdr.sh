@@ -741,8 +741,8 @@ fm_backend_herdr_agent_identity() {  # <target>
 #             composer (e.g. "/compact" -> "/compact compaction
 #             instructions", verified live against real grok 0.2.82) - that
 #             first Enter is a SELECTION, not a submission.
-#   unknown - the pane could not be read, or no composer row (of either shape)
-#             was found in the captured window.
+#   unknown - the pane could not be read, or no composer row of any recognized
+#             shape was found in the captured window.
 #
 # Ghost/placeholder note: herdr's ANSI pane read preserves the harness's own
 # de-emphasis styling, and the classifier extracts real typed content with the

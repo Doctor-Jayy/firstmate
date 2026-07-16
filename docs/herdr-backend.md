@@ -483,9 +483,10 @@ Codex additionally shows dynamic tip/hint text in its idle composer rather than 
 The first fix deliberately left that as a conservative `pending` verdict at the composer-guard layer because plain text could not distinguish a ghost suggestion from real typed input.
 The 2026-07-08 follow-up below closes that gap using herdr's ANSI capture, which preserves Codex's faint styling for ghost suggestions.
 
-**Fix:** `fm_backend_herdr_composer_state` now recognizes TWO composer-row shapes in one scan - the existing bordered shape, and a new bare (unbordered) shape: a trimmed line that STARTS with a verified agent-specific prompt glyph (`❯` claude or `›` codex) with no closing border required at all.
+**Fix:** The 2026-07-07 change added a second composer-row shape to `fm_backend_herdr_composer_state` - a bare (unbordered) trimmed line that starts with a verified agent-specific prompt glyph (`❯` Claude or `›` Codex) with no closing border required.
 The bare-row default is deliberately limited to `❯` and `›`, while generic shell-style glyphs (`>`, `$`, `%`, `#`) stay recognized only after the bordered shape has already identified a composer row, so a no-agent shell fallback cannot be misread as a delivered escalation.
-Both shapes are checked in the SAME forward scan, keeping whichever match comes LAST (bottom-most on screen), rather than trying bordered-only first and falling back to bare-only when nothing bordered is found: a bordered decorative box (a welcome banner, an update notice) is always rendered ABOVE the live composer, never below it, in every harness observed, so "last match of either shape wins" always resolves to the genuinely live, bottom-most row instead of a stale decorative box still sitting in the capture window.
+Within the verified Claude/Codex layouts, the bordered and bare shapes share one forward scan and the last match wins, so a stale decorative box above the live composer cannot outrank it.
+The current third, Pi-specific separator-framed shape and its stricter ambiguity handling are documented in the 2026-07-16 incident below.
 See `fm_backend_herdr_composer_state` in `bin/backends/herdr.sh` for the implementation, and `tests/fm-backend-herdr.test.sh`'s "unbordered (bare) composer rows" section (fixtures captured verbatim from real `claude`/`codex` panes) for the regression coverage - each of those tests read `unknown` before this fix and reads the correct verdict after.
 
 ## Incident (2026-07-08): away-mode delivery wedged on Codex ghost suggestions
@@ -751,8 +752,7 @@ The helper teardown completed successfully and verified the default-session flee
 Herdr may reap the daemon pane when its foreground process exits, so the subsequent exact close can return non-zero even though an exact probe confirms `pane_not_found`.
 That confirmed-absence branch is intentional idempotent cleanup and remains unchanged.
 
-The AFK skill now states the missing cross-product reliability guarantee: every supported primary-harness and supervisor-backend pair requires a verified safe empty verdict, drafted refusal, and end-to-end single-delivery regression.
-This contract stays in the AFK skill rather than being duplicated in `AGENTS.md`.
+The AFK skill's "Reliability properties" section owns the cross-product verification guarantee, and `AGENTS.md` does not duplicate it.
 
 ## Native `pane.agent_status_changed` push escalation (immediate blocked wake)
 

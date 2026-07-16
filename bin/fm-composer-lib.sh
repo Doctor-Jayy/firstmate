@@ -162,9 +162,9 @@ fm_composer_strip_ghost() {
 
 # fm_composer_classify_content: the single shared composer-content verdict.
 #   <bordered> 1 when <content> came from a genuine agent-composer container (a
-#              bordered composer box, or a structurally-identified bare AGENT
-#              prompt row); 0 for a bare, unstructured row (e.g. tmux's raw
-#              cursor line that carried no box border).
+#              bordered box, a separator-framed row, or a structurally
+#              identified bare AGENT prompt row); 0 for a bare, unstructured row
+#              (e.g. tmux's raw cursor line that carried no box border).
 #   <content>  the candidate composer content, already border-stripped and
 #              whitespace-trimmed by the caller.
 #   [idle_re]  optional per-harness idle-placeholder regex (e.g. grok's
