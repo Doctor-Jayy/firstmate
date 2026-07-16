@@ -844,7 +844,8 @@ fm_backend_herdr_composer_state() {  # <target> -> empty|pending|unknown
     stripped="${stripped#"${stripped%%[![:space:]]*}"}"
     stripped="${stripped%"${stripped##*[![:space:]]}"}"
   elif [ "$shape" = pi-frame ]; then
-    bordered=1
+    fm_composer_classify_content 1 "$stripped" "$FM_BACKEND_HERDR_IDLE_RE" sensitive "$stripped" literal
+    return 0
   fi
   # Delegate the empty/pending/unknown decision to the shared owner. The bare
   # shape only ever starts with an AGENT glyph (FM_BACKEND_HERDR_BARE_PROMPT_RE

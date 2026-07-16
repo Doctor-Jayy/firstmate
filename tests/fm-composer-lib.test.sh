@@ -13,6 +13,8 @@
 #      agent composer either way, bordered or bare.
 #   4. Real unsubmitted text reads `pending`; a known idle placeholder reads
 #      `empty`.
+#   5. Separator-framed literal rows treat every nonempty glyph as drafted
+#      content rather than interpreting prompt glyphs owned by another harness.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -82,6 +84,18 @@ test_agent_glyphs_are_empty_bordered_and_bare() {
   pass "fm_composer_classify_content: agent prompt glyphs (❯ claude, › codex) read empty bordered or bare"
 }
 
+test_literal_glyph_rows_preserve_single_character_drafts() {
+  local g out
+  for g in '>' '$' '%' '#' '❯' '›'; do
+    out=$(classify 1 "$g" '' sensitive "$g" literal)
+    [ "$out" = pending ] \
+      || fail "literal glyph '$g' must remain drafted content, got '$out'"
+  done
+  out=$(classify 1 '' '' sensitive '' literal)
+  [ "$out" = empty ] || fail "an empty literal row should read empty, got '$out'"
+  pass "fm_composer_classify_content: literal rows preserve shell and agent prompt glyphs as drafts"
+}
+
 # --- Empty content and idle placeholder -------------------------------------
 
 test_empty_content_is_empty() {
@@ -145,6 +159,7 @@ test_stripped_unbordered_content_uses_plain_content
 test_bare_shell_prompt_with_command_is_not_empty
 test_bordered_shell_glyph_is_empty
 test_agent_glyphs_are_empty_bordered_and_bare
+test_literal_glyph_rows_preserve_single_character_drafts
 test_empty_content_is_empty
 test_idle_placeholder_is_empty
 test_utf8_prompt_prefixes_strip_under_c_locale
