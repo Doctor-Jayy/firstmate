@@ -137,9 +137,9 @@ test_guard_warnings() {
   grep -F 'last beat: never' "$err" >/dev/null || fail "guard banner missing the beacon age"
   grep -F 'guarded operation WILL still run' "$err" >/dev/null || fail "guard banner missing generic continuation wording"
   ! grep -F 'requested message WILL still be sent' "$err" >/dev/null || fail "shared guard used send-specific continuation wording"
-  grep -F 'repair missing watcher supervision' "$err" >/dev/null || fail "guard banner missing the harness-aware fix command"
+  grep -E 'repair missing watcher supervision|repair a missing or failed watcher cycle' "$err" >/dev/null || fail "guard banner missing the harness-aware fix command"
   grep -F 'queued wakes pending - drain them' "$err" >/dev/null || fail "guard did not warn about pending queue"
-  grep -F 'After draining queued wakes, repair missing watcher supervision' "$err" >/dev/null || fail "guard did not order supervision repair after drain"
+  grep -E 'After draining queued wakes, repair (missing watcher supervision|a missing or failed watcher cycle)' "$err" >/dev/null || fail "guard did not order supervision repair after drain"
   ! grep -F 'Restart it NOW, before anything else' "$err" >/dev/null || fail "guard still gave conflicting restart-first instruction"
   ! grep -F 'as the harness-tracked background task' "$err" >/dev/null || fail "guard still printed the old universal background-task repair text"
   banner_line=$(grep -n 'WATCHER DOWN' "$err" | head -1 | cut -d: -f1)
