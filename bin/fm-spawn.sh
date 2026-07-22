@@ -1220,6 +1220,10 @@ fi
 
 META_WINDOW=$T
 [ "$BACKEND" = orca ] && META_WINDOW=$W
+if ! exec 9> "$STATE/$ID.meta"; then
+  echo "error: could not publish task metadata for $ID" >&2
+  exit 1
+fi
 {
   echo "window=$META_WINDOW"
   echo "worktree=$WT"
@@ -1258,7 +1262,8 @@ META_WINDOW=$T
     echo "home=$PROJ_ABS"
     echo "projects=$SECONDMATE_PROJECTS"
   fi
-} > "$STATE/$ID.meta"
+} >&9
+exec 9>&-
 [ "$BACKEND" = orca ] && ORCA_ABORT_CLEANUP=0
 
 sq_brief=$(shell_quote "$BRIEF")
