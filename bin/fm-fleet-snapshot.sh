@@ -15,6 +15,8 @@
 #     data/backlog.md and cover In flight, Queued, and Done.
 #     Canonical tasks-axi rows are structured; free-form non-empty lines in
 #     those sections are preserved as unstructured records.
+#     Structured rows preserve captain-hold metadata such as hold_kind and
+#     hold_reason when tasks-axi emits it.
 #   tasks[]: one row per state/<id>.meta, sorted by id.
 #     current_state is parsed from bin/fm-crew-state.sh <id> and preserves
 #     state, source, detail, and raw line separately.
@@ -28,11 +30,20 @@
 #     endpoint.agent_alive is populated for secondmates only, where it is useful
 #     return-channel supervision data; other tasks use "not_checked".
 #   scout_reports[]: present data/<id>/report.md pointers.
+#   main_inventory: {valid,reason,orphan_in_flight[],unstructured_current_count} -
+#     main-home current-inventory checks shared with secondmate_home_summary_json
+#     (orphan structured in-flight ids with no state/<id>.meta, and unstructured
+#     current backlog rows). Does not invent live tasks; meta remains truth for
+#     workers. Bearings maps failures into omitted[] disclosure (and a Charted
+#     Next gate line) rather than silent empty Underway.
 #   secondmate_current: {records[],total,shown,truncated} - bounded current summaries
 #     for registered secondmates, selected from validated structured state inside
 #     each home with explicit provenance, freshness, endpoint evidence, and unknown
 #     failure reasons. Parent status and bounded terminal evidence are historical,
 #     untrusted supplements only and never override a valid structured summary.
+#     Each structured-home record carries active_children, decisions_open, holds,
+#     queued, landed, endpoints, counts, and omitted; captain holds appear in
+#     decisions_open and are also preserved in queued with hold metadata.
 #   secondmate_landed: {records[],truncated[],unreadable[]} - the compatibility
 #     landed-work roll-up derived from secondmate_current.
 #   secondmate_guidance: return-channel action note for renderers and bearings.
@@ -130,6 +141,8 @@ JSON is the stable machine-readable output contract.
 --secondmate-home-summary emits the bounded structured summary used after a
 validated registered-home handoff. It is local-only, skips nested secondmate
 aggregation, and marks missing or unstructured current backlog state invalid.
+Active tasks-axi captain holds appear as decisions_open and stay visible in
+queued with hold_reason and hold_kind for downstream projections.
 Cross-home reads use FM_SNAPSHOT_SECONDMATES (default 20, 0 lifts the count
 bound), FM_SNAPSHOT_SECONDMATE_TIMEOUT, and FM_SNAPSHOT_SECONDMATE_MAX_BYTES.
 Terminal contradiction evidence uses
@@ -254,7 +267,7 @@ backlog_json() {  # [<backlog-path>] - defaults to this home's $BACKLOG
     def links($rest): [$rest | scan(url_pattern)];
     def strip_trailing_metadata:
       reduce range(0; 20) as $_ (.;
-        sub("[[:space:]]*\\([[:space:]]*(?:(?:repo|kind|priority):[[:space:]]*[^)]*|(?:since|merged|reported|done)[[:space:]]+[^)]*)[[:space:]]*\\)[[:space:]]*$"; ""));
+        sub("[[:space:]]*\\([[:space:]]*(?:(?:repo|kind|priority|hold|hold-kind):[[:space:]]*[^)]*|(?:since|merged|reported|done)[[:space:]]+[^)]*)[[:space:]]*\\)[[:space:]]*$"; ""));
     def strip_title_artifacts:
       sub("[[:space:]]+-[[:space:]]+data/[^[:space:])]+/report\\.md$"; "")
       | sub("[[:space:]]+data/[^[:space:])]+/report\\.md$"; "")
@@ -309,6 +322,8 @@ backlog_json() {  # [<backlog-path>] - defaults to this home's $BACKLOG
              repo:metadata($rest; "repo"),
              kind:metadata($rest; "kind"),
              priority:metadata($rest; "priority"),
+             hold_reason:metadata($rest; "hold"),
+             hold_kind:metadata($rest; "hold-kind"),
              blocked_by:cap($rest; ".*blocked-by:[[:space:]]*(?<v>[^[:space:])]+).*"),
              blocked_reason:blocked_reason($rest),
              since:metadata_word($rest; "since"),
@@ -511,6 +526,33 @@ task_json_lines() {
   done | jq -s 'sort_by(.id)'
 }
 
+# Main-home current-inventory validity: same orphan / unstructured-current checks
+# used by secondmate_home_summary_json, without inventing live task rows.
+# Meta inventory remains the sole source of live workers; this object only
+# discloses backlog↔task inconsistency for renderers (Bearings omitted/gates).
+main_inventory_json() {  # <backlog-json> <tasks-json>
+  jq -n \
+    --argjson backlog "$1" \
+    --argjson tasks "$2" '
+    ([ $backlog.records[]?
+       | select((.state == "in_flight" or .state == "queued") and (.structured | not)) ]) as $unstructured_current
+    | ([ $backlog.records[]? | select(.state == "in_flight" and .structured) ]) as $owned_in_flight
+    | ([ $owned_in_flight[]
+         | select(.id as $id | [$tasks[].id] | index($id) | not)
+         | .id ]) as $orphan_in_flight
+    | (($unstructured_current | length) == 0
+       and ($orphan_in_flight | length) == 0) as $valid
+    | (if ($unstructured_current | length) > 0 then "unstructured current backlog row"
+       elif ($orphan_in_flight | length) > 0 then "in-flight backlog item has no child metadata"
+       else null end) as $reason
+    | {
+        valid:$valid,
+        reason:$reason,
+        orphan_in_flight:$orphan_in_flight,
+        unstructured_current_count:($unstructured_current | length)
+      }'
+}
+
 # Project one home's canonical structured inventory into the bounded shape a
 # validated parent read needs.
 # This mode never reads parent events or terminal text and never aggregates
@@ -532,7 +574,11 @@ secondmate_home_summary_json() {  # <backlog-json> <tasks-json>
        | select((.state == "in_flight" or .state == "queued") and (.structured | not)) ]) as $unstructured_current
     | ([ $backlog.records[]? | select(.state == "in_flight" and .structured) ]) as $owned_in_flight
     | ([ $backlog.records[]? | select(.state == "queued" and .structured) ]) as $queued_all
-    | ([ $backlog.records[]? | select(.state == "done" and .structured)
+    | ([ $queued_all[]
+         | select(.kind == "captain" and .hold_kind == "captain" and .hold_reason != null)
+         | {id,key:.id,verb:"captain-hold",summary:(.title | trunc(160)),
+            reason:(.hold_reason | trunc(160)),source:"backlog"} ]) as $captain_holds_all
+    | ([ $backlog.records[]? | select(.state == "done" and .structured and .kind != "captain")
          | {id:(.id | trunc(120)),title:(.title | trunc(120)),
             pr_url:((.pr_url // null) | if . == null then null else trunc(500) end),
             report_path:((.report_path // null) | if . == null then null else trunc(500) end),
@@ -556,8 +602,9 @@ secondmate_home_summary_json() {  # <backlog-json> <tasks-json>
          | select(.id == $work.id and .current_state.state == "working")
          | {id,kind,state:.current_state.state,source:.current_state.source,
             doing:((.current_state.detail // "") | trunc(120))} ]) as $active_all
-    | ([ $tasks[] as $t | ($t.hints.open_decisions // [])[]
-         | {id:$t.id,key,verb,summary:(.summary | trunc(160))} ]) as $decisions_all
+    | ($captain_holds_all
+       + ([ $tasks[] as $t | ($t.hints.open_decisions // [])[]
+            | {id:$t.id,key,verb,summary:(.summary | trunc(160)),reason:null,source:"status"} ])) as $decisions_all
     | ([ $queued_all[] | select(.blocked_by != null)
          | {id:(.id | trunc(120)),title:(.title | trunc(90)),blocked_by:(.blocked_by | trunc(120)),reason:((.blocked_reason // "blocked") | trunc(120)),source:"backlog"} ]
        + [ $owned_in_flight[] as $work
@@ -583,7 +630,7 @@ secondmate_home_summary_json() {  # <backlog-json> <tasks-json>
          ($terminal_in_flight | map(.id + "=" + .state) | join(", "))
        else null end) as $reason
     | (if $valid | not then "unknown"
-       elif any($decisions_all[]; .verb == "needs-decision") then "captain_decision"
+       elif any($decisions_all[]; .verb == "needs-decision" or .verb == "captain-hold") then "captain_decision"
        elif ($active_all | length) > 0 then "active_child_work"
        elif ($holds_all | length) > 0 then "externally_held"
        else "no_active_work" end) as $state
@@ -600,6 +647,8 @@ secondmate_home_summary_json() {  # <backlog-json> <tasks-json>
         queued:([$queued_all[] | {id:(.id | trunc(120)),title:(.title | trunc(120)),
           blocked_by:((.blocked_by // null) | if . == null then null else trunc(120) end),
           blocked_reason:((.blocked_reason // null) | if . == null then null else trunc(160) end),
+          hold_reason:((.hold_reason // null) | if . == null then null else trunc(160) end),
+          hold_kind:((.hold_kind // null) | if . == null then null else trunc(40) end),
           repo:((.repo // null) | if . == null then null else trunc(120) end),
           kind:((.kind // null) | if . == null then null else trunc(40) end)}][:$queued_n]),
         landed:(if $landed_n == 0 then $landed_all else $landed_all[:$landed_n] end),
@@ -686,10 +735,12 @@ registry_secondmates_json() {
     if [ "$bytes" -gt "$max_bytes" ]; then
       byte_truncated=true
       content=$(printf "%s" "$content" | LC_ALL=C head -c "$max_bytes")
-      case "$content" in
-        *$'\n'*) content=${content%$'\n'*} ;;
-        *) content= ;;
-      esac
+      complete=${content%$'\n'*}
+      if [ "$complete" != "$content" ]; then
+        content=$complete
+      else
+        content=
+      fi
     fi
     if [ -n "$content" ]; then
       lines=$(printf "%s\n" "$content" | awk "END {print NR}")
@@ -783,10 +834,12 @@ bounded_parent_activities_json() {  # <status-file>
     byte_truncated=false
     if [ "$size" -gt "$max_bytes" ]; then
       byte_truncated=true
-      case "$content" in
-        *$'\n'*) content=${content#*$'\n'} ;;
-        *) content= ;;
-      esac
+      complete=${content#*$'\n'}
+      if [ "$complete" != "$content" ]; then
+        content=$complete
+      else
+        content=
+      fi
     fi
     if [ -n "$content" ]; then
       lines_in_chunk=$(printf "%s\n" "$content" | awk "END {print NR}")
@@ -1080,7 +1133,7 @@ secondmate_current_json() {  # <parent-tasks-json>
          terminal_evidence:$terminal,contradiction:$contradiction}')
     else
       if [ -n "$event_raw" ]; then
-        provenance=parent-event-fallback
+        provenance='parent-event-fallback'
         freshness=historical-event
       else
         provenance=unknown
@@ -1159,6 +1212,8 @@ if [ "$OUTPUT_MODE" = secondmate-home-summary ]; then
 fi
 
 SCOUT_REPORTS_JSON=$(scout_report_lines)
+MAIN_INVENTORY_JSON=$(main_inventory_json "$BACKLOG_JSON" "$TASKS_JSON") \
+  || { echo "fm-fleet-snapshot: main inventory summary failed" >&2; exit 1; }
 SECONDMATE_CURRENT_JSON=$(secondmate_current_json "$TASKS_JSON") \
   || { echo "fm-fleet-snapshot: registered secondmate aggregation failed" >&2; exit 1; }
 SECONDMATE_LANDED_JSON=$(secondmate_landed_from_current_json "$SECONDMATE_CURRENT_JSON") \
@@ -1174,6 +1229,7 @@ jq -n \
   --arg projects "$PROJECTS" \
   --argjson backlog "$BACKLOG_JSON" \
   --argjson tasks "$TASKS_JSON" \
+  --argjson main_inventory "$MAIN_INVENTORY_JSON" \
   --argjson scout_reports "$SCOUT_REPORTS_JSON" \
   --argjson secondmate_current "$SECONDMATE_CURRENT_JSON" \
   --argjson secondmate_landed "$SECONDMATE_LANDED_JSON" \
@@ -1187,6 +1243,7 @@ jq -n \
      roots:{fm_root:$fm_root,state:$state,data:$data,config:$config,projects:$projects},
      backlog:$backlog,
      tasks:($tasks | map(. + {backlog:backlog_by_id(.id)})),
+     main_inventory:$main_inventory,
      scout_reports:($scout_reports | map(. + {kind:report_kind(.id)})),
      secondmate_current:$secondmate_current,
      secondmate_landed:$secondmate_landed,
