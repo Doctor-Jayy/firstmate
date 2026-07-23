@@ -1527,6 +1527,17 @@ test_composer_state_bare_prompt_is_empty() {
   pass "fm_backend_herdr_composer_state: a bare '❯' composer row reads empty"
 }
 
+test_composer_state_bare_prompt_is_empty_under_c_locale() {
+  local dir log resp fb out
+  dir="$TMP_ROOT/composer-bare-c-locale"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
+  printf ' ╭────────────────────────╮\n │ ❯ │\n ╰──────── Composer ─────╯\n\n Shift+Tab:mode\n' > "$resp/1.out"
+  fb=$(make_herdr_fakebin "$dir")
+  out=$( LC_ALL=C LANG=C PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_composer_state default:w1:p2' "$ROOT" )
+  [ "$out" = empty ] || fail "a bare prompt glyph should read as empty under LC_ALL=C, got '$out'"
+  pass "fm_backend_herdr_composer_state: a bare '❯' composer row reads empty under LC_ALL=C (bracket-class byte decomposition regression)"
+}
+
 test_composer_state_ghost_placeholder_is_empty() {
   local dir log resp fb out
   dir="$TMP_ROOT/composer-ghost"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
@@ -2814,6 +2825,7 @@ test_busy_state_working_maps_to_busy
 test_busy_state_done_and_blocked_map_to_idle
 test_busy_state_unknown_on_no_agent
 test_composer_state_bare_prompt_is_empty
+test_composer_state_bare_prompt_is_empty_under_c_locale
 test_composer_state_ghost_placeholder_is_empty
 test_composer_state_real_text_is_pending
 test_composer_state_popup_placeholder_fill_is_pending
