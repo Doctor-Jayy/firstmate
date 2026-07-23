@@ -114,6 +114,27 @@ test_idle_placeholder_case_mode_is_explicit() {
   pass "fm_composer_classify_content: idle matching preserves the caller's case mode"
 }
 
+# --- Byte-safe glyph stripping under a C locale -----------------------------
+
+test_agent_glyphs_strip_literally_under_c_locale() {
+  local glyph out
+  for glyph in '❯' '›'; do
+    out=$(LC_ALL=C LANG=C ROOT="$ROOT" /bin/bash -c '
+      . "$ROOT/bin/fm-composer-lib.sh"
+      fm_composer_classify_content 1 "$1"
+    ' _ "$glyph ")
+    [ "$out" = empty ] \
+      || fail "an empty '$glyph ' composer under LC_ALL=C should read empty, got '$out'"
+    out=$(LC_ALL=C LANG=C ROOT="$ROOT" /bin/bash -c '
+      . "$ROOT/bin/fm-composer-lib.sh"
+      fm_composer_classify_content 1 "$1"
+    ' _ "${glyph} hello")
+    [ "$out" = pending ] \
+      || fail "a real '$glyph <text>' composer under LC_ALL=C should read pending, got '$out'"
+  done
+  pass "fm_composer_classify_content: multibyte agent glyphs (❯, ›) strip literally under a C locale, not by byte count"
+}
+
 # --- Real text is pending ---------------------------------------------------
 
 test_real_text_is_pending() {
@@ -133,4 +154,5 @@ test_agent_glyphs_are_empty_bordered_and_bare
 test_empty_content_is_empty
 test_idle_placeholder_is_empty
 test_idle_placeholder_case_mode_is_explicit
+test_agent_glyphs_strip_literally_under_c_locale
 test_real_text_is_pending

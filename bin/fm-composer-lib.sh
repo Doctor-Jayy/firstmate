@@ -205,10 +205,15 @@ fm_composer_classify_content() {  # <bordered> <content> [idle_re] [idle_case] [
   if fm_composer_idle_matches "$content" "$idle_re" "$idle_case"; then
     printf 'empty'; return 0
   fi
-  # Strip a leading prompt glyph, then re-judge the remainder.
+  # Strip a leading prompt glyph by its literal bytes, then re-judge the remainder.
+  # Character-count patterns split UTF-8 glyphs under Bash 3.2 in a C locale.
   case "$content" in
-    '❯ '*|'› '*|'> '*|'$ '*|'% '*|'# '*) content=${content#??} ;;
-    '❯'*|'›'*|'>'*|'$'*|'%'*|'#'*) content=${content#?} ;;
+    '❯'*) content=${content#'❯'} ;;
+    '›'*) content=${content#'›'} ;;
+    '>'*) content=${content#'>'} ;;
+    '$'*) content=${content#'$'} ;;
+    '%'*) content=${content#'%'} ;;
+    '#'*) content=${content#'#'} ;;
   esac
   content="${content#"${content%%[![:space:]]*}"}"
   content="${content%"${content##*[![:space:]]}"}"
