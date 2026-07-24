@@ -166,6 +166,25 @@ write_watcher_lock() {
   printf '%s\n' "$identity" > "$state/.watch.lock/pid-identity"
 }
 
+# Bounds a wait on a simulated older-watcher background pid to ~10s so a
+# migration regression that fails to terminate it fails this test with a
+# diagnostic instead of hanging the process indefinitely and stalling the
+# whole suite. Force-kills and reaps the child on timeout so no orphaned
+# background process survives, then fails with the given message.
+wait_older_watcher_or_fail() {
+  local pid=$1 message=$2 i=0
+  while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 500 ]; do
+    sleep 0.02
+    i=$((i + 1))
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -KILL "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    fail "$message"
+  fi
+  wait "$pid" 2>/dev/null || true
+}
+
 assert_valid_migration_marker() {
   local marker=$1
   [ -f "$marker" ] && [ ! -L "$marker" ] || fail "migration success did not publish an ordinary marker"
@@ -867,7 +886,8 @@ SH
   FM_HOME="$dir/home" PATH="$dir/fakebin:$BASE_PATH" "$MIGRATE" > "$dir/migrate.out" 2> "$dir/migrate.err"
   rc=$?
   set -e
-  wait "$older_pid" 2>/dev/null || true
+  wait_older_watcher_or_fail "$older_pid" \
+    "older watcher pid $older_pid did not exit within 10s after migration (waited for gate $gate, present=$([ -e "$gate" ] && echo yes || echo no); sentinel $sentinel, present=$([ -e "$sentinel" ] && echo yes || echo no))"
   [ "$rc" -eq 0 ] || fail "pause-before-scan migration failed"
   [ ! -e "$sentinel" ] || fail "older watcher ran a legacy check during migration startup"
   [ -e "$gate" ] || fail "migration never reached its under-lock check scan"
@@ -883,7 +903,8 @@ SH
   FM_HOME="$dir/home" PATH="$dir/fakebin:$BASE_PATH" "$MIGRATE" > "$dir/migrate.out" 2> "$dir/migrate.err"
   rc=$?
   set -e
-  wait "$older_pid" 2>/dev/null || true
+  wait_older_watcher_or_fail "$older_pid" \
+    "older watcher pid $older_pid (no-check case) did not exit within 10s after migration"
   [ "$rc" -eq 0 ] || fail "no-check older-watcher migration failed"
   ! kill -0 "$older_pid" 2>/dev/null || fail "no-check migration left the older watcher running"
   assert_valid_migration_marker "$state/.pr-check-migration-v1"
